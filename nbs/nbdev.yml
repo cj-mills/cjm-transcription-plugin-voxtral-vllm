@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "cjm-transcription-plugin-voxtral-vllm"
+  site-url: "https://cj-mills.github.io/cjm-transcription-plugin-voxtral-vllm"
+  description: "Mistral Voxtral plugin for the cjm-transcription-plugin-system library - provides local speech-to-text transcription through vLLM with configurable model selection and parameter control."
+  repo-branch: main
+  repo-url: "https://github.com/cj-mills/cjm-transcription-plugin-voxtral-vllm"

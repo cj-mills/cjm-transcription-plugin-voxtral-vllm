@@ -427,9 +427,9 @@ class VoxtralVLLMPlugin(PluginInterface):
     ) -> List[str]:  # Returns list of supported audio formats
         """Get the list of supported audio file formats."""
         return ["wav", "mp3", "flac", "m4a", "ogg", "webm", "mp4", "avi", "mov"]
-    
+
+    @staticmethod
     def get_config_schema(
-        self
     ) -> Dict[str, Any]:  # Returns the configuration schema dictionary
         """Return configuration schema for Voxtral VLLM."""
         return {

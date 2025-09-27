@@ -236,7 +236,6 @@ class VoxtralVLLMPlugin:
         "Get the list of supported audio file formats."
     
     def get_config_schema(
-            self
         ) -> Dict[str, Any]:  # Returns the configuration schema dictionary
         "Return configuration schema for Voxtral VLLM."
     

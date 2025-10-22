@@ -42,7 +42,7 @@ try:
 except ImportError:
     MISTRAL_COMMON_AVAILABLE = False
     
-from cjm_transcription_plugin_system.plugin_interface import PluginInterface
+from cjm_transcription_plugin_system.plugin_interface import TranscriptionPlugin
 from cjm_transcription_plugin_system.core import AudioData, TranscriptionResult
 
 # %% ../nbs/plugin.ipynb 4
@@ -396,7 +396,7 @@ class VLLMServer:
         self.stop()
 
 # %% ../nbs/plugin.ipynb 5
-class VoxtralVLLMPlugin(PluginInterface):
+class VoxtralVLLMPlugin(TranscriptionPlugin):
     """Mistral Voxtral transcription plugin via vLLM server."""
     
     def __init__(self):

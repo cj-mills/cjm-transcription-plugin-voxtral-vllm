@@ -59,15 +59,17 @@ from typing import Optional, Callable, List
 from datetime import datetime
 
 class VLLMServer:
+    """vLLM server manager for Voxtral models."""
+
     def __init__(
         self,
-        model: str = "mistralai/Voxtral-Mini-3B-2507",
-        port: int = 8000,
-        host: str = "0.0.0.0",
-        gpu_memory_utilization: float = 0.85,
-        log_level: str = "INFO",  # DEBUG, INFO, WARNING, ERROR
-        capture_logs: bool = True,
-        **kwargs
+        model: str = "mistralai/Voxtral-Mini-3B-2507", # Model name to serve
+        port: int = 8000, # Port for the server
+        host: str = "0.0.0.0", # Host address to bind to
+        gpu_memory_utilization: float = 0.85, # Fraction of GPU memory to use
+        log_level: str = "INFO", # Logging level (DEBUG, INFO, WARNING, ERROR)
+        capture_logs: bool = True, # Whether to capture and display server logs
+        **kwargs # Additional vLLM server arguments
     ):
         self.model = model
         self.port = port
@@ -99,15 +101,17 @@ class VLLMServer:
         for key, value in kwargs.items():
             self.cmd.extend([f"--{key.replace('_', '-')}", str(value)])
     
-    def add_log_callback(self, callback: Callable[[str], None]):
-        """Add a callback function that will be called for each log line.
-        
-        Args:
-            callback: Function that takes a log line string as input
-        """
+    def add_log_callback(
+        self, 
+        callback: Callable[[str], None] # Function that receives log line strings
+    ) -> None: # Returns nothing
+        """Add a callback function to receive each log line."""
         self.log_callbacks.append(callback)
     
-    def _process_log_line(self, line: str):
+    def _process_log_line(
+        self, 
+        line: str # Log line to process
+    ) -> None: # Returns nothing
         """Process a single log line."""
         if not line.strip():
             return
@@ -139,7 +143,11 @@ class VLLMServer:
             else:
                 print(line)
     
-    def _log_reader(self, pipe, pipe_name: str):
+    def _log_reader(
+        self, 
+        pipe, # Pipe to read from
+        pipe_name: str # Name of the pipe (stdout/stderr)
+    ) -> None: # Returns nothing
         """Read logs from a pipe in a separate thread."""
         for line in iter(pipe.readline, ''):
             if self.stop_logging.is_set():
@@ -152,14 +160,13 @@ class VLLMServer:
                 elif pipe_name == "stdout":
                     self._process_log_line(line.strip())
     
-    def start(self, wait_for_ready: bool = True, timeout: int = 120, show_progress: bool = True):
-        """Start the vLLM server.
-        
-        Args:
-            wait_for_ready: Wait for server to be ready before returning
-            timeout: Maximum time to wait for server to be ready
-            show_progress: Show progress indicators during startup
-        """
+    def start(
+        self, 
+        wait_for_ready: bool = True, # Wait for server to be ready before returning
+        timeout: int = 120, # Maximum seconds to wait for server readiness
+        show_progress: bool = True # Show progress indicators during startup
+    ) -> None: # Returns nothing
+        """Start the vLLM server."""
         if self.is_running():
             print("Server is already running")
             return
@@ -201,7 +208,11 @@ class VLLMServer:
         if wait_for_ready:
             self._wait_for_server(timeout, show_progress)
     
-    def _wait_for_server(self, timeout: int, show_progress: bool):
+    def _wait_for_server(
+        self, 
+        timeout: int, # Maximum seconds to wait
+        show_progress: bool # Whether to show progress indicators
+    ) -> None: # Returns nothing
         """Wait for server to be ready to accept requests."""
         start_time = time.time()
         last_status = ""
@@ -249,7 +260,7 @@ class VLLMServer:
         
         raise TimeoutError(f"Server did not start within {timeout} seconds")
     
-    def stop(self):
+    def stop(self) -> None: # Returns nothing
         """Stop the vLLM server."""
         if self.process and self.process.poll() is None:
             print("Stopping vLLM server...")
@@ -269,18 +280,14 @@ class VLLMServer:
             self.process = None
             print("Server stopped")
     
-    def restart(self):
+    def restart(self) -> None: # Returns nothing
         """Restart the server."""
         self.stop()
         time.sleep(2)
         self.start()
     
-    def is_running(self) -> bool:
-        """Check if server is running and responsive.
-        
-        This method checks both if the process is alive and if the server
-        is actually responding to health checks.
-        """
+    def is_running(self) -> bool: # True if server is running and responsive
+        """Check if server is running and responsive."""
         # First check if process exists and hasn't exited
         if self.process is None or self.process.poll() is not None:
             return False
@@ -298,15 +305,11 @@ class VLLMServer:
             print(f"\n❌ The following exception occurred: {e}")
             return False
     
-    def get_recent_logs(self, n: int = 100) -> List[str]:
-        """Get the most recent n log lines.
-        
-        Args:
-            n: Number of recent log lines to retrieve
-            
-        Returns:
-            List of recent log lines
-        """
+    def get_recent_logs(
+        self, 
+        n: int = 100 # Number of recent log lines to retrieve
+    ) -> List[str]: # List of recent log lines
+        """Get the most recent n log lines."""
         logs = []
         while not self.log_queue.empty() and len(logs) < n:
             try:
@@ -315,12 +318,8 @@ class VLLMServer:
                 break
         return logs
     
-    def get_metrics_from_logs(self) -> dict:
-        """Parse recent logs to extract performance metrics.
-        
-        Returns:
-            Dictionary with metrics like throughput, GPU usage, etc.
-        """
+    def get_metrics_from_logs(self) -> dict: # Dictionary with performance metrics
+        """Parse recent logs to extract performance metrics."""
         metrics = {
             "prompt_throughput": 0.0,
             "generation_throughput": 0.0,
@@ -363,13 +362,12 @@ class VLLMServer:
         
         return metrics
     
-    def tail_logs(self, follow: bool = True, n: int = 10):
-        """Tail the server logs (similar to tail -f).
-        
-        Args:
-            follow: Continue displaying new logs as they arrive
-            n: Number of initial lines to display
-        """
+    def tail_logs(
+        self, 
+        follow: bool = True, # Continue displaying new logs as they arrive
+        n: int = 10 # Number of initial lines to display
+    ) -> None: # Returns nothing
+        """Tail the server logs (similar to tail -f)."""
         # Display recent logs
         recent = self.get_recent_logs(n)
         for line in recent:
@@ -408,29 +406,22 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         self.model_id: Optional[str] = None
     
     @property
-    def name(
-        self
-    ) -> str:  # Returns the plugin name
+    def name(self) -> str: # The plugin name identifier
         """Get the plugin name identifier."""
         return "voxtral_vllm"
     
     @property
-    def version(
-        self
-    ) -> str:  # Returns the plugin version
+    def version(self) -> str: # The plugin version string
         """Get the plugin version string."""
         return "1.0.0"
     
     @property
-    def supported_formats(
-        self
-    ) -> List[str]:  # Returns list of supported audio formats
+    def supported_formats(self) -> List[str]: # List of supported audio formats
         """Get the list of supported audio file formats."""
         return ["wav", "mp3", "flac", "m4a", "ogg", "webm", "mp4", "avi", "mov"]
 
     @staticmethod
-    def get_config_schema(
-    ) -> Dict[str, Any]:  # Returns the configuration schema dictionary
+    def get_config_schema() -> Dict[str, Any]: # Configuration schema dictionary
         """Return configuration schema for Voxtral VLLM."""
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
@@ -528,17 +519,15 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             "additionalProperties": False
         }
     
-    def get_current_config(
-        self
-    ) -> Dict[str, Any]:  # Returns the current configuration dictionary
+    def get_current_config(self) -> Dict[str, Any]: # Current configuration dictionary
         """Return current configuration."""
         defaults = self.get_config_defaults()
         return {**defaults, **self.config}
     
     def initialize(
         self,
-        config: Optional[Dict[str, Any]] = None  # Configuration dictionary to initialize the plugin
-    ) -> None:
+        config: Optional[Dict[str, Any]] = None # Configuration dictionary to initialize the plugin
+    ) -> None: # Returns nothing
         """Initialize the plugin with configuration."""
         if config:
             is_valid, error = self.validate_config(config)
@@ -579,7 +568,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             f"in {self.config['server_mode']} mode"
         )
     
-    def _ensure_server_running(self) -> None:
+    def _ensure_server_running(self) -> None: # Returns nothing
         """Ensure the vLLM server is running (for managed mode)."""
         if self.config["server_mode"] == "managed" and self.server:
             if not self.server.is_running():
@@ -604,8 +593,8 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     
     def _prepare_audio(
         self,
-        audio: Union[AudioData, str, Path]  # Audio data, file path, or Path object to prepare
-    ) -> str:  # Returns path to the prepared audio file
+        audio: Union[AudioData, str, Path] # Audio data, file path, or Path object to prepare
+    ) -> str: # Path to the prepared audio file
         """Prepare audio for Voxtral processing."""
         if isinstance(audio, (str, Path)):
             # Already a file path
@@ -637,9 +626,9 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     
     def execute(
         self,
-        audio: Union[AudioData, str, Path],  # Audio data or path to audio file to transcribe
-        **kwargs  # Additional arguments to override config
-    ) -> TranscriptionResult:  # Returns transcription result with text and metadata
+        audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe
+        **kwargs # Additional arguments to override config
+    ) -> TranscriptionResult: # Transcription result with text and metadata
         """Transcribe audio using Voxtral via vLLM."""
         # Ensure server is running
         self._ensure_server_running()
@@ -692,9 +681,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 except Exception:
                     pass
     
-    def is_available(
-        self
-    ) -> bool:  # Returns True if vLLM and its dependencies are available
+    def is_available(self) -> bool: # True if vLLM and dependencies are available
         """Check if vLLM and required dependencies are available."""
         if not OPENAI_AVAILABLE:
             return False
@@ -708,9 +695,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         except ImportError:
             return False
     
-    def cleanup(
-        self
-    ) -> None:
+    def cleanup(self) -> None: # Returns nothing
         """Clean up resources."""
         self.logger.info("Cleaning up Voxtral VLLM plugin")
         
@@ -729,29 +714,18 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
 # %% ../nbs/plugin.ipynb 6
 @patch
 def supports_streaming(
-    self: VoxtralVLLMPlugin
-) -> bool:
+    self: VoxtralVLLMPlugin # The plugin instance
+) -> bool: # True if streaming is supported
     """Check if this plugin supports streaming transcription."""
     return True
 
 @patch
 def execute_stream(
-    self: VoxtralVLLMPlugin,
-    audio: Union[AudioData, str, Path],  # Audio data or path to audio file
-    **kwargs  # Additional plugin-specific parameters
-) -> Generator[str, None, TranscriptionResult]:  # Yields text chunks, returns final result
-    """Stream transcription results chunk by chunk.
-    
-    Args:
-        audio: Audio data or path to audio file
-        **kwargs: Additional plugin-specific parameters
-        
-    Yields:
-        str: Partial transcription text chunks as they become available
-        
-    Returns:
-        TranscriptionResult: Final complete transcription with metadata
-    """
+    self: VoxtralVLLMPlugin, # The plugin instance
+    audio: Union[AudioData, str, Path], # Audio data or path to audio file
+    **kwargs # Additional plugin-specific parameters
+) -> Generator[str, None, TranscriptionResult]: # Yields text chunks, returns final result
+    """Stream transcription results chunk by chunk."""
     # Ensure server is running
     self._ensure_server_running()
     

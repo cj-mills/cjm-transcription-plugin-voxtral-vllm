@@ -207,12 +207,20 @@ class VoxtralVLLMPlugin:
     def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
             """Return current configuration."""
             return self.config
+    
+        @staticmethod
+        def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
+        "Return current configuration."
+    
+    def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
+            """Return dataclass describing the plugin's configuration options."""
+            return VoxtralVLLMPluginConfig
         
         def initialize(
             self,
             config: Optional[Any] = None # Configuration dataclass, dict, or None
         ) -> None
-        "Return current configuration."
+        "Return dataclass describing the plugin's configuration options."
     
     def initialize(
             self,

@@ -549,6 +549,11 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
         """Return current configuration."""
         return self.config
+
+    @staticmethod
+    def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
+        """Return dataclass describing the plugin's configuration options."""
+        return VoxtralVLLMPluginConfig
     
     def initialize(
         self,

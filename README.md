@@ -43,6 +43,7 @@ Detailed documentation for each module in the project:
 ``` python
 from cjm_transcription_plugin_voxtral_vllm.plugin import (
     VLLMServer,
+    VoxtralVLLMPluginConfig,
     VoxtralVLLMPlugin
 )
 ```
@@ -146,19 +147,38 @@ class VLLMServer:
 ```
 
 ``` python
+@dataclass
+class VoxtralVLLMPluginConfig:
+    "Configuration for Voxtral VLLM transcription plugin."
+    
+    model_id: str = field(...)
+    server_mode: str = field(...)
+    server_url: str = field(...)
+    server_port: int = field(...)
+    gpu_memory_utilization: float = field(...)
+    max_model_len: int = field(...)
+    language: Optional[str] = field(...)
+    temperature: float = field(...)
+    streaming: bool = field(...)
+    server_startup_timeout: int = field(...)
+    auto_start_server: bool = field(...)
+    capture_server_logs: bool = field(...)
+    dtype: str = field(...)
+    tensor_parallel_size: int = field(...)
+```
+
+``` python
 class VoxtralVLLMPlugin:
     def __init__(self):
         """Initialize the Voxtral VLLM plugin with default configuration."""
         self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-        self.config = {}
-        self.server: Optional[VLLMServer] = None
+        self.config: VoxtralVLLMPluginConfig = None
     "Mistral Voxtral transcription plugin via vLLM server."
     
     def __init__(self):
             """Initialize the Voxtral VLLM plugin with default configuration."""
             self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-            self.config = {}
-            self.server: Optional[VLLMServer] = None
+            self.config: VoxtralVLLMPluginConfig = None
         "Initialize the Voxtral VLLM plugin with default configuration."
     
     def name(self) -> str: # The plugin name identifier
@@ -180,32 +200,24 @@ class VoxtralVLLMPlugin:
     def supported_formats(self) -> List[str]: # List of supported audio formats
             """Get the list of supported audio file formats."""
             return ["wav", "mp3", "flac", "m4a", "ogg", "webm", "mp4", "avi", "mov"]
-    
-        @staticmethod
-        def get_config_schema() -> Dict[str, Any]: # Configuration schema dictionary
+        
+        def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
         "Get the list of supported audio file formats."
     
-    def get_config_schema() -> Dict[str, Any]: # Configuration schema dictionary
-            """Return configuration schema for Voxtral VLLM."""
-            return {
-                "$schema": "http://json-schema.org/draft-07/schema#",
-        "Return configuration schema for Voxtral VLLM."
-    
-    def get_current_config(self) -> Dict[str, Any]: # Current configuration dictionary
+    def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
             """Return current configuration."""
-            defaults = self.get_config_defaults()
-            return {**defaults, **self.config}
+            return self.config
         
         def initialize(
             self,
-            config: Optional[Dict[str, Any]] = None # Configuration dictionary to initialize the plugin
-        ) -> None: # Returns nothing
+            config: Optional[Any] = None # Configuration dataclass, dict, or None
+        ) -> None
         "Return current configuration."
     
     def initialize(
             self,
-            config: Optional[Dict[str, Any]] = None # Configuration dictionary to initialize the plugin
-        ) -> None: # Returns nothing
+            config: Optional[Any] = None # Configuration dataclass, dict, or None
+        ) -> None
         "Initialize the plugin with configuration."
     
     def execute(
@@ -220,11 +232,11 @@ class VoxtralVLLMPlugin:
             if not OPENAI_AVAILABLE
         "Check if vLLM and required dependencies are available."
     
-    def cleanup(self) -> None: # Returns nothing
+    def cleanup(self) -> None:
             """Clean up resources."""
             self.logger.info("Cleaning up Voxtral VLLM plugin")
             
             # Stop managed server if running
-            if self.config.get("server_mode") == "managed" and self.server
+            if self.config and self.config.server_mode == "managed" and self.server
         "Clean up resources."
 ```

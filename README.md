@@ -152,6 +152,7 @@ class VoxtralVLLMPluginConfig:
     "Configuration for Voxtral VLLM transcription plugin."
     
     model_id: str = field(...)
+    device: str = field(...)
     server_mode: str = field(...)
     server_url: str = field(...)
     server_port: int = field(...)

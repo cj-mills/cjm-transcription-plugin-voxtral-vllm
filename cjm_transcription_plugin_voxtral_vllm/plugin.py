@@ -411,6 +411,14 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_ENUM: ["mistralai/Voxtral-Mini-3B-2507", "mistralai/Voxtral-Small-24B-2507"]
         }
     )
+    device:str = field(
+        default="cuda",
+        metadata={
+            SCHEMA_TITLE: "Device",
+            SCHEMA_DESC: "Device for inference (will use CUDA if available)",
+            SCHEMA_ENUM: ["cuda"]
+        }
+    )
     server_mode:str = field(
         default="managed",
         metadata={

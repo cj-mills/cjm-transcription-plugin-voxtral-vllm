@@ -47,7 +47,7 @@ except ImportError:
 from cjm_transcription_plugin_system.plugin_interface import TranscriptionPlugin
 from cjm_transcription_plugin_system.core import AudioData, TranscriptionResult
 from cjm_plugin_system.utils.validation import (
-    dict_to_config, config_to_dict, validate_config,
+    dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_MIN, SCHEMA_MAX, SCHEMA_ENUM
 )
 
@@ -554,9 +554,15 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         """Get the list of supported audio file formats."""
         return ["wav", "mp3", "flac", "m4a", "ogg", "webm", "mp4", "avi", "mov"]
     
-    def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
-        """Return current configuration."""
-        return self.config
+    def get_current_config(self) -> Dict[str, Any]: # Current configuration as dictionary
+        """Return current configuration state."""
+        if not self.config:
+            return {}
+        return config_to_dict(self.config)
+
+    def get_config_schema(self) -> Dict[str, Any]: # JSON Schema for configuration
+        """Return JSON Schema for UI generation."""
+        return dataclass_to_jsonschema(VoxtralVLLMPluginConfig)
 
     @staticmethod
     def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
@@ -567,31 +573,55 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         self,
         config: Optional[Any] = None # Configuration dataclass, dict, or None
     ) -> None:
-        """Initialize the plugin with configuration."""
-        # Handle config input
-        if config is None:
-            self.config = VoxtralVLLMPluginConfig()
-        elif isinstance(config, VoxtralVLLMPluginConfig):
-            self.config = config
-        elif isinstance(config, dict):
-            self.config = dict_to_config(VoxtralVLLMPluginConfig, config, validate=True)
-        else:
-            raise TypeError(f"Expected VoxtralVLLMPluginConfig, dict, or None, got {type(config).__name__}")
+        """Initialize or re-configure the plugin (idempotent)."""
+        # Parse new config
+        new_config = dict_to_config(VoxtralVLLMPluginConfig, config or {})
         
+        # Determine if we need to restart server
+        needs_server_restart = False
+        
+        if self.config:
+            # Check if model changed
+            if self.config.model_id != new_config.model_id:
+                self.logger.info(f"Config change: Model {self.config.model_id} -> {new_config.model_id}")
+                needs_server_restart = True
+            
+            # Check if server mode changed
+            if self.config.server_mode != new_config.server_mode:
+                self.logger.info(f"Config change: Server mode {self.config.server_mode} -> {new_config.server_mode}")
+                needs_server_restart = True
+            
+            # Check if server port changed (managed mode)
+            if self.config.server_port != new_config.server_port:
+                self.logger.info(f"Config change: Server port {self.config.server_port} -> {new_config.server_port}")
+                needs_server_restart = True
+        else:
+            # First initialization
+            needs_server_restart = True
+        
+        # Stop existing server if config requires restart
+        if needs_server_restart and self.server and self.server.is_running():
+            self.logger.info("Stopping existing server for reconfiguration")
+            self.server.stop()
+            self.server = None
+        
+        # Apply new config
+        self.config = new_config
         self.model_id = self.config.model_id
         
         # Initialize based on server mode
         if self.config.server_mode == "managed":
             # Create managed server instance (but don't start yet)
-            self.server = VLLMServer(
-                model=self.model_id,
-                port=self.config.server_port,
-                gpu_memory_utilization=self.config.gpu_memory_utilization,
-                max_model_len=self.config.max_model_len,
-                capture_logs=self.config.capture_server_logs,
-                dtype=self.config.dtype,
-                tensor_parallel_size=self.config.tensor_parallel_size
-            )
+            if needs_server_restart or self.server is None:
+                self.server = VLLMServer(
+                    model=self.model_id,
+                    port=self.config.server_port,
+                    gpu_memory_utilization=self.config.gpu_memory_utilization,
+                    max_model_len=self.config.max_model_len,
+                    capture_logs=self.config.capture_server_logs,
+                    dtype=self.config.dtype,
+                    tensor_parallel_size=self.config.tensor_parallel_size
+                )
             server_url = f"http://localhost:{self.config.server_port}"
         else:
             # External server mode
@@ -664,6 +694,15 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         else:
             raise ValueError(f"Unsupported audio input type: {type(audio)}")
     
+    def _save_to_db(
+        self,
+        result: TranscriptionResult # Transcription result to save
+    ) -> None:
+        """Save transcription result to database (placeholder)."""
+        # Placeholder for DB logic
+        # Implementation will use self.db_path which can be injected via config or environment
+        pass
+    
     def execute(
         self,
         audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe
@@ -710,6 +749,9 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                     "temperature": temperature,
                 }
             )
+            
+            # Save to database (placeholder)
+            self._save_to_db(transcription_result)
             
             self.logger.info(f"Transcription completed: {len(response.text.split())} words")
             return transcription_result

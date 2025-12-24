@@ -12,14 +12,16 @@ pip install cjm_transcription_plugin_voxtral_vllm
 ## Project Structure
 
     nbs/
+    ├── meta.ipynb   # Metadata introspection for the Voxtral VLLM plugin used by cjm-ctl to generate the registration manifest.
     └── plugin.ipynb # Plugin implementation for Mistral Voxtral transcription through vLLM server
 
-Total: 1 notebook
+Total: 2 notebooks
 
 ## Module Dependencies
 
 ``` mermaid
 graph LR
+    meta[meta<br/>Metadata]
     plugin[plugin<br/>Voxtral VLLM Plugin]
 ```
 
@@ -32,6 +34,37 @@ No CLI commands found in this project.
 ## Module Overview
 
 Detailed documentation for each module in the project:
+
+### Metadata (`meta.ipynb`)
+
+> Metadata introspection for the Voxtral VLLM plugin used by cjm-ctl to
+> generate the registration manifest.
+
+#### Import
+
+``` python
+from cjm_transcription_plugin_voxtral_vllm.meta import (
+    get_plugin_metadata
+)
+```
+
+#### Functions
+
+``` python
+def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest generation
+    """Return metadata required to register this plugin with the PluginManager."""
+    # Calculate default DB path relative to the environment
+    base_path = os.path.dirname(os.path.dirname(sys.executable))
+    data_dir = os.path.join(base_path, "data")
+    db_path = os.path.join(data_dir, "voxtral_vllm_transcriptions.db")
+    
+    # Ensure data directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    return {
+        "name": "cjm-transcription-plugin-voxtral-vllm",
+    "Return metadata required to register this plugin with the PluginManager."
+```
 
 ### Voxtral VLLM Plugin (`plugin.ipynb`)
 
@@ -202,16 +235,21 @@ class VoxtralVLLMPlugin:
             """Get the list of supported audio file formats."""
             return ["wav", "mp3", "flac", "m4a", "ogg", "webm", "mp4", "avi", "mov"]
         
-        def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
+        def get_current_config(self) -> Dict[str, Any]: # Current configuration as dictionary
         "Get the list of supported audio file formats."
     
-    def get_current_config(self) -> VoxtralVLLMPluginConfig: # Current configuration dataclass
-            """Return current configuration."""
-            return self.config
+    def get_current_config(self) -> Dict[str, Any]: # Current configuration as dictionary
+            """Return current configuration state."""
+            if not self.config
+        "Return current configuration state."
+    
+    def get_config_schema(self) -> Dict[str, Any]: # JSON Schema for configuration
+            """Return JSON Schema for UI generation."""
+            return dataclass_to_jsonschema(VoxtralVLLMPluginConfig)
     
         @staticmethod
         def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
-        "Return current configuration."
+        "Return JSON Schema for UI generation."
     
     def get_config_dataclass() -> VoxtralVLLMPluginConfig: # Configuration dataclass
             """Return dataclass describing the plugin's configuration options."""
@@ -227,7 +265,7 @@ class VoxtralVLLMPlugin:
             self,
             config: Optional[Any] = None # Configuration dataclass, dict, or None
         ) -> None
-        "Initialize the plugin with configuration."
+        "Initialize or re-configure the plugin (idempotent)."
     
     def execute(
             self,

@@ -1,0 +1,47 @@
+# Environment for cjm-transcription-plugin-voxtral-vllm
+# Provides Voxtral transcription via vLLM server with CUDA support
+name: cjm-transcription-plugin-voxtral-vllm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  # Python version
+  - python=3.11
+
+  # Pip dependencies
+  - pip
+  - pip:
+    # PyTorch with CUDA (adjust for target cuda version as needed)
+    - torch
+    - torchaudio
+
+    # Core plugin infrastructure
+    - cjm-plugin-system
+    - cjm-transcription-plugin-system
+
+    # vLLM and Mistral dependencies
+    - vllm
+    - mistral-common[audio]
+    - transformers
+    - accelerate
+
+    # OpenAI client for vLLM API
+    - openai
+
+    # Audio processing
+    - soundfile
+    - numpy
+    - librosa
+
+    # Utilities
+    - fastcore
+    - nest-asyncio
+    - uv
+
+    # Worker dependencies (FastAPI, uvicorn, psutil, httpx)
+    - fastapi
+    - uvicorn
+    - psutil
+    - httpx

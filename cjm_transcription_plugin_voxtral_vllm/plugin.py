@@ -101,8 +101,10 @@ class VLLMServer:
         self.log_callbacks: List[Callable] = []
         
         # Build command
+        # Use sys.executable instead of "python"
+        # This ensures we use the exact same environment the worker is running in
         self.cmd = [
-            "python", "-m", "vllm.entrypoints.openai.api_server",
+            sys.executable, "-m", "vllm.entrypoints.openai.api_server",
             "--model", model,
             "--port", str(self.port),
             "--host", host,
@@ -112,7 +114,6 @@ class VLLMServer:
             "--load-format", "mistral",
         ]
         
-        # Add any additional arguments
         for key, value in kwargs.items():
             self.cmd.extend([f"--{key.replace('_', '-')}", str(value)])
     
@@ -187,6 +188,7 @@ class VLLMServer:
             return
         
         print(f"Starting vLLM server with model {self.model}...")
+        print(f"Command: {' '.join(self.cmd)}") # Log the command for debugging
         
         # Start process with pipes for output capture
         self.process = subprocess.Popen(
@@ -196,7 +198,8 @@ class VLLMServer:
             text=True,
             bufsize=1,  # Line buffered
             universal_newlines=True,
-            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
+            # Removed preexec_fn as it can be unstable in some nested process scenarios
+            # preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
         )
         
         # Start log reading threads
@@ -231,8 +234,6 @@ class VLLMServer:
         """Wait for server to be ready to accept requests."""
         start_time = time.time()
         last_status = ""
-        
-        # Key phases to look for in logs
         phases = {
             "detected platform": "🔍 Detecting platform...",
             "Loading model": "📦 Loading model weights...",
@@ -245,7 +246,6 @@ class VLLMServer:
         }
         
         while time.time() - start_time < timeout:
-            # Check for new status in logs
             if show_progress and not self.log_queue.empty():
                 try:
                     log_line = self.log_queue.get_nowait()
@@ -255,21 +255,25 @@ class VLLMServer:
                                 print(f"\n  {status_msg}")
                                 last_status = status_msg
                             break
-                except queue.Empty:
-                    pass
+                except queue.Empty: pass
             
-            # Try to connect to the server
             try:
                 response = requests.get(f"{self.base_url}/health", timeout=1)
                 if response.status_code == 200:
                     print(f"\n✅ vLLM server is ready at {self.base_url}")
                     return
-            except requests.exceptions.RequestException:
-                pass
+            except requests.exceptions.RequestException: pass
             
-            # Check if process has crashed
+            # Crash Reporting
             if self.process.poll() is not None:
-                raise RuntimeError(f"Server process exited with code {self.process.poll()}")
+                # Read whatever is left in the pipes to see the error
+                stdout, stderr = self.process.communicate()
+                error_msg = f"Server process exited with code {self.process.poll()}"
+                if stdout: error_msg += f"\n[STDOUT]:\n{stdout}"
+                if stderr: error_msg += f"\n[STDERR]:\n{stderr}"
+                
+                print(error_msg) # Print to main log
+                raise RuntimeError(error_msg)
             
             time.sleep(0.5)
         

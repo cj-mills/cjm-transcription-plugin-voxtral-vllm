@@ -23,9 +23,11 @@ Total: 2 notebooks
 graph LR
     meta[meta<br/>Metadata]
     plugin[plugin<br/>Voxtral VLLM Plugin]
+
+    plugin --> meta
 ```
 
-No cross-module dependencies detected.
+*1 cross-module dependencies detected*
 
 ## CLI Reference
 

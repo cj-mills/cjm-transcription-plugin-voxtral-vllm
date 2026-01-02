@@ -25,6 +25,8 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
         "name": "cjm-transcription-plugin-voxtral-vllm",
         "version": "1.0.0",
         "type": "transcription",
+        "category": "transcription",
+        "interface": "cjm_transcription_plugin_system.plugin_interface.TranscriptionPlugin",
         
         "module": "cjm_transcription_plugin_voxtral_vllm.plugin",
         "class": "VoxtralVLLMPlugin",

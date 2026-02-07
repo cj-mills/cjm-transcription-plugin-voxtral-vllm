@@ -6,7 +6,6 @@
 __all__ = ['VLLMServer', 'VoxtralVLLMPluginConfig', 'VoxtralVLLMPlugin']
 
 # %% ../nbs/plugin.ipynb #77c18907
-import sqlite3
 import json
 import time
 import os
@@ -51,6 +50,8 @@ except ImportError:
     
 from cjm_transcription_plugin_system.plugin_interface import TranscriptionPlugin
 from cjm_transcription_plugin_system.core import AudioData, TranscriptionResult
+from cjm_transcription_plugin_system.storage import TranscriptionStorage
+from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
 from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_MIN, SCHEMA_MAX, SCHEMA_ENUM
@@ -551,6 +552,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         self.server: Optional[VLLMServer] = None
         self.client: Optional[OpenAI] = None
         self.model_id: Optional[str] = None
+        self.storage: Optional[TranscriptionStorage] = None
     
     @property
     def name(self) -> str: # The plugin name identifier
@@ -646,6 +648,10 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             base_url=f"{server_url}/v1"
         )
         
+        # Initialize standardized storage
+        db_path = get_plugin_metadata()["db_path"]
+        self.storage = TranscriptionStorage(db_path)
+        
         self.logger.info(
             f"Initialized Voxtral VLLM plugin with model '{self.model_id}' "
             f"in {self.config.server_mode} mode"
@@ -707,50 +713,6 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         else:
             raise ValueError(f"Unsupported audio input type: {type(audio)}")
     
-    def _init_db(self):
-        """Ensure table exists."""
-        db_path = get_plugin_metadata()["db_path"]
-        with sqlite3.connect(db_path) as con:
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS transcriptions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT,
-                    audio_path TEXT,
-                    text TEXT,
-                    segments JSON,
-                    metadata JSON,
-                    created_at REAL
-                )
-            """)
-            con.execute("CREATE INDEX IF NOT EXISTS idx_job_id ON transcriptions(job_id)")
-
-    def _save_to_db(self, result: TranscriptionResult, audio_path: str, **kwargs) -> None:
-        """Save result to SQLite."""
-        try:
-            self._init_db()
-            db_path = get_plugin_metadata()["db_path"]
-            
-            # Extract a job_id if provided, else gen random
-            job_id = kwargs.get("job_id", str(uuid4()))
-            
-            # Serialize complex objects
-            segments_json = json.dumps(result.segments) if result.segments else None
-            metadata_json = json.dumps(result.metadata)
-            
-            with sqlite3.connect(db_path) as con:
-                con.execute(
-                    """
-                    INSERT INTO transcriptions 
-                    (job_id, audio_path, text, segments, metadata, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (job_id, str(audio_path), result.text, segments_json, metadata_json, time.time())
-                )
-                self.logger.info(f"Saved result to DB (Job: {job_id})")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to save to DB: {e}")
-    
     def execute(
         self,
         audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe
@@ -763,6 +725,9 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         # Prepare audio file
         audio_path = self._prepare_audio(audio)
         temp_file_created = not isinstance(audio, (str, Path))
+        
+        # Hash the audio file before transcription
+        audio_hash = hash_file(audio_path)
         
         try:
             # Get config values, allowing kwargs overrides
@@ -798,12 +763,29 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 }
             )
             
-            # Capture original path for DB
-            original_path = str(audio)
-            if hasattr(audio, 'to_temp_file'): original_path = "in_memory_data"
+            # Hash the transcription output
+            text_hash = hash_bytes(transcription_result.text.encode())
             
-            # Save to database
-            self._save_to_db(transcription_result, original_path, **kwargs)
+            # Determine the original audio path for DB storage
+            original_path = str(audio)
+            if hasattr(audio, 'to_temp_file'):
+                original_path = "in_memory_data"
+            
+            # Save to standardized storage
+            job_id = kwargs.get("job_id", str(uuid4()))
+            try:
+                self.storage.save(
+                    job_id=job_id,
+                    audio_path=original_path,
+                    audio_hash=audio_hash,
+                    text=transcription_result.text,
+                    text_hash=text_hash,
+                    segments=transcription_result.segments,
+                    metadata=transcription_result.metadata
+                )
+                self.logger.info(f"Saved result to DB (Job: {job_id})")
+            except Exception as e:
+                self.logger.error(f"Failed to save to DB: {e}")
             
             self.logger.info(f"Transcription completed: {len(response.text.split())} words")
             return transcription_result

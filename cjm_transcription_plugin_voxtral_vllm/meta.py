@@ -9,21 +9,39 @@ __all__ = ['get_plugin_metadata']
 import os
 import sys
 from typing import Any, Dict
+from . import __version__
 
 # %% ../nbs/meta.ipynb #12e9f5c3
 def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest generation
     """Return metadata required to register this plugin with the PluginManager."""
-    # Calculate default DB path relative to the environment
+    # Fallback base path (current behavior for backward compatibility)
     base_path = os.path.dirname(os.path.dirname(sys.executable))
-    data_dir = os.path.join(base_path, "data")
+    
+    # Use CJM config if available, else fallback to env-relative paths
+    cjm_data_dir = os.environ.get("CJM_DATA_DIR")
+    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
+    
+    # Plugin data directory
+    plugin_name = "cjm-transcription-plugin-voxtral-vllm"
+    if cjm_data_dir:
+        data_dir = os.path.join(cjm_data_dir, plugin_name)
+    else:
+        data_dir = os.path.join(base_path, "data")
+    
     db_path = os.path.join(data_dir, "voxtral_vllm_transcriptions.db")
     
     # Ensure data directory exists
     os.makedirs(data_dir, exist_ok=True)
+    
+    # HuggingFace cache: use models_dir if configured
+    if cjm_models_dir:
+        hf_home = os.path.join(cjm_models_dir, "huggingface")
+    else:
+        hf_home = os.path.join(base_path, ".cache", "huggingface")
 
     return {
-        "name": "cjm-transcription-plugin-voxtral-vllm",
-        "version": "1.0.0",
+        "name": plugin_name,
+        "version": __version__,
         "type": "transcription",
         "category": "transcription",
         "interface": "cjm_transcription_plugin_system.plugin_interface.TranscriptionPlugin",
@@ -40,13 +58,14 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
         # Mini: ~8GB VRAM, Small: ~48GB VRAM
         "resources": {
             "requires_gpu": True,
-            "min_gpu_vram_mb": 8192,       # Minimum for Voxtral-Mini
-            "recommended_gpu_vram_mb": 16384,  # Comfortable for Mini with KV cache
+            "min_gpu_vram_mb": 8192,
+            "recommended_gpu_vram_mb": 16384,
             "min_system_ram_mb": 16384
         },
         
         "env_vars": {
             "CUDA_VISIBLE_DEVICES": "0",
-            "VLLM_ATTENTION_BACKEND": "FLASHINFER",  # Recommended for vLLM
+            "VLLM_ATTENTION_BACKEND": "FLASHINFER",
+            "HF_HOME": hf_home
         }
     }

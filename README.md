@@ -55,16 +55,16 @@ from cjm_transcription_plugin_voxtral_vllm.meta import (
 ``` python
 def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest generation
     """Return metadata required to register this plugin with the PluginManager."""
-    # Calculate default DB path relative to the environment
+    # Fallback base path (current behavior for backward compatibility)
     base_path = os.path.dirname(os.path.dirname(sys.executable))
-    data_dir = os.path.join(base_path, "data")
-    db_path = os.path.join(data_dir, "voxtral_vllm_transcriptions.db")
     
-    # Ensure data directory exists
-    os.makedirs(data_dir, exist_ok=True)
-
-    return {
-        "name": "cjm-transcription-plugin-voxtral-vllm",
+    # Use CJM config if available, else fallback to env-relative paths
+    cjm_data_dir = os.environ.get("CJM_DATA_DIR")
+    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
+    
+    # Plugin data directory
+    plugin_name = "cjm-transcription-plugin-voxtral-vllm"
+    if cjm_data_dir
     "Return metadata required to register this plugin with the PluginManager."
 ```
 

@@ -1,0 +1,102 @@
+[
+  {
+    "objectID": "meta.html",
+    "href": "meta.html",
+    "title": "Metadata",
+    "section": "",
+    "text": "source",
+    "crumbs": [
+      "Metadata"
+    ]
+  },
+  {
+    "objectID": "meta.html#testing",
+    "href": "meta.html#testing",
+    "title": "Metadata",
+    "section": "Testing",
+    "text": "Testing\n\nimport json\n\nmetadata = get_plugin_metadata()\nprint(json.dumps(metadata, indent=2))\n\n{\n  \"name\": \"cjm-transcription-plugin-voxtral-vllm\",\n  \"version\": \"0.0.14\",\n  \"type\": \"transcription\",\n  \"category\": \"transcription\",\n  \"interface\": \"cjm_transcription_plugin_system.plugin_interface.TranscriptionPlugin\",\n  \"module\": \"cjm_transcription_plugin_voxtral_vllm.plugin\",\n  \"class\": \"VoxtralVLLMPlugin\",\n  \"python_path\": \"/opt/hostedtoolcache/Python/3.12.12/x64/bin/python\",\n  \"db_path\": \"/opt/hostedtoolcache/Python/3.12.12/x64/data/voxtral_vllm_transcriptions.db\",\n  \"resources\": {\n    \"requires_gpu\": true,\n    \"min_gpu_vram_mb\": 8192,\n    \"recommended_gpu_vram_mb\": 16384,\n    \"min_system_ram_mb\": 16384\n  },\n  \"env_vars\": {\n    \"CUDA_VISIBLE_DEVICES\": \"0\",\n    \"VLLM_ATTENTION_BACKEND\": \"FLASHINFER\",\n    \"HF_HOME\": \"/opt/hostedtoolcache/Python/3.12.12/x64/.cache/huggingface\"\n  }\n}",
+    "crumbs": [
+      "Metadata"
+    ]
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "",
+    "text": "pip install cjm_transcription_plugin_voxtral_vllm",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "index.html#install",
+    "href": "index.html#install",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "",
+    "text": "pip install cjm_transcription_plugin_voxtral_vllm",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "index.html#project-structure",
+    "href": "index.html#project-structure",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "Project Structure",
+    "text": "Project Structure\nnbs/\n├── meta.ipynb   # Metadata introspection for the Voxtral VLLM plugin used by cjm-ctl to generate the registration manifest.\n└── plugin.ipynb # Plugin implementation for Mistral Voxtral transcription through vLLM server\nTotal: 2 notebooks",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "index.html#module-dependencies",
+    "href": "index.html#module-dependencies",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "Module Dependencies",
+    "text": "Module Dependencies\ngraph LR\n    meta[meta&lt;br/&gt;Metadata]\n    plugin[plugin&lt;br/&gt;Voxtral VLLM Plugin]\n\n    plugin --&gt; meta\n1 cross-module dependencies detected",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "index.html#cli-reference",
+    "href": "index.html#cli-reference",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "CLI Reference",
+    "text": "CLI Reference\nNo CLI commands found in this project.",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "index.html#module-overview",
+    "href": "index.html#module-overview",
+    "title": "cjm-transcription-plugin-voxtral-vllm",
+    "section": "Module Overview",
+    "text": "Module Overview\nDetailed documentation for each module in the project:\n\nMetadata (meta.ipynb)\n\nMetadata introspection for the Voxtral VLLM plugin used by cjm-ctl to generate the registration manifest.\n\n\nImport\nfrom cjm_transcription_plugin_voxtral_vllm.meta import (\n    get_plugin_metadata\n)\n\n\nFunctions\ndef get_plugin_metadata() -&gt; Dict[str, Any]: # Plugin metadata for manifest generation\n    \"\"\"Return metadata required to register this plugin with the PluginManager.\"\"\"\n    # Fallback base path (current behavior for backward compatibility)\n    base_path = os.path.dirname(os.path.dirname(sys.executable))\n    \n    # Use CJM config if available, else fallback to env-relative paths\n    cjm_data_dir = os.environ.get(\"CJM_DATA_DIR\")\n    cjm_models_dir = os.environ.get(\"CJM_MODELS_DIR\")\n    \n    # Plugin data directory\n    plugin_name = \"cjm-transcription-plugin-voxtral-vllm\"\n    if cjm_data_dir\n    \"Return metadata required to register this plugin with the PluginManager.\"\n\n\n\nVoxtral VLLM Plugin (plugin.ipynb)\n\nPlugin implementation for Mistral Voxtral transcription through vLLM server\n\n\nImport\nfrom cjm_transcription_plugin_voxtral_vllm.plugin import (\n    VLLMServer,\n    VoxtralVLLMPluginConfig,\n    VoxtralVLLMPlugin\n)\n\n\nFunctions\n@patch\ndef supports_streaming(\n    self: VoxtralVLLMPlugin # The plugin instance\n) -&gt; bool: # True if streaming is supported\n    \"Check if this plugin supports streaming transcription.\"\n@patch\ndef execute_stream(\n    self: VoxtralVLLMPlugin, # The plugin instance\n    audio: Union[AudioData, str, Path], # Audio data or path to audio file\n    **kwargs # Additional plugin-specific parameters\n) -&gt; Generator[str, None, TranscriptionResult]: # Yields text chunks, returns final result\n    \"Stream transcription results chunk by chunk.\"\n\n\nClasses\nclass VLLMServer:\n    def __init__(\n        self,\n        model: str = \"mistralai/Voxtral-Mini-3B-2507\", # Model name to serve\n        port: int = 8000, # Port for the server\n        host: str = \"0.0.0.0\", # Host address to bind to\n        gpu_memory_utilization: float = 0.85, # Fraction of GPU memory to use\n        log_level: str = \"INFO\", # Logging level (DEBUG, INFO, WARNING, ERROR)\n        capture_logs: bool = True, # Whether to capture and display server logs\n        **kwargs # Additional vLLM server arguments\n    )\n    \"vLLM server manager for Voxtral models.\"\n    \n    def __init__(\n            self,\n            model: str = \"mistralai/Voxtral-Mini-3B-2507\", # Model name to serve\n            port: int = 8000, # Port for the server\n            host: str = \"0.0.0.0\", # Host address to bind to\n            gpu_memory_utilization: float = 0.85, # Fraction of GPU memory to use\n            log_level: str = \"INFO\", # Logging level (DEBUG, INFO, WARNING, ERROR)\n            capture_logs: bool = True, # Whether to capture and display server logs\n            **kwargs # Additional vLLM server arguments\n        )\n    \n    def add_log_callback(\n            self, \n            callback: Callable[[str], None] # Function that receives log line strings\n        ) -&gt; None: # Returns nothing\n        \"Add a callback function to receive each log line.\"\n    \n    def start(\n            self, \n            wait_for_ready: bool = True, # Wait for server to be ready before returning\n            timeout: int = 120, # Maximum seconds to wait for server readiness\n            show_progress: bool = True # Show progress indicators during startup\n        ) -&gt; None: # Returns nothing\n        \"Start the vLLM server.\"\n    \n    def stop(self) -&gt; None: # Returns nothing\n            \"\"\"Stop the vLLM server.\"\"\"\n            if self.process and self.process.poll() is None\n        \"Stop the vLLM server.\"\n    \n    def restart(self) -&gt; None: # Returns nothing\n            \"\"\"Restart the server.\"\"\"\n            self.stop()\n            time.sleep(2)\n            self.start()\n        \n        def is_running(self) -&gt; bool: # True if server is running and responsive\n        \"Restart the server.\"\n    \n    def is_running(self) -&gt; bool: # True if server is running and responsive\n        \"Check if server is running and responsive.\"\n    \n    def get_recent_logs(\n            self, \n            n: int = 100 # Number of recent log lines to retrieve\n        ) -&gt; List[str]: # List of recent log lines\n        \"Get the most recent n log lines.\"\n    \n    def get_metrics_from_logs(self) -&gt; dict: # Dictionary with performance metrics\n            \"\"\"Parse recent logs to extract performance metrics.\"\"\"\n            metrics = {\n                \"prompt_throughput\": 0.0,\n        \"Parse recent logs to extract performance metrics.\"\n    \n    def tail_logs(\n            self, \n            follow: bool = True, # Continue displaying new logs as they arrive\n            n: int = 10 # Number of initial lines to display\n        ) -&gt; None: # Returns nothing\n        \"Tail the server logs (similar to tail -f).\"\n@dataclass\nclass VoxtralVLLMPluginConfig:\n    \"Configuration for Voxtral VLLM transcription plugin.\"\n    \n    model_id: str = field(...)\n    device: str = field(...)\n    server_mode: str = field(...)\n    server_url: str = field(...)\n    server_port: int = field(...)\n    gpu_memory_utilization: float = field(...)\n    max_model_len: int = field(...)\n    language: Optional[str] = field(...)\n    temperature: float = field(...)\n    streaming: bool = field(...)\n    server_startup_timeout: int = field(...)\n    auto_start_server: bool = field(...)\n    capture_server_logs: bool = field(...)\n    dtype: str = field(...)\n    tensor_parallel_size: int = field(...)\nclass VoxtralVLLMPlugin:\n    def __init__(self):\n        \"\"\"Initialize the Voxtral VLLM plugin with default configuration.\"\"\"\n        self.logger = logging.getLogger(f\"{__name__}.{type(self).__name__}\")\n        self.config: VoxtralVLLMPluginConfig = None\n    \"Mistral Voxtral transcription plugin via vLLM server.\"\n    \n    def __init__(self):\n            \"\"\"Initialize the Voxtral VLLM plugin with default configuration.\"\"\"\n            self.logger = logging.getLogger(f\"{__name__}.{type(self).__name__}\")\n            self.config: VoxtralVLLMPluginConfig = None\n        \"Initialize the Voxtral VLLM plugin with default configuration.\"\n    \n    def name(self) -&gt; str: # The plugin name identifier\n            \"\"\"Get the plugin name identifier.\"\"\"\n            return \"voxtral_vllm\"\n        \n        @property\n        def version(self) -&gt; str: # The plugin version string\n        \"Get the plugin name identifier.\"\n    \n    def version(self) -&gt; str: # The plugin version string\n            \"\"\"Get the plugin version string.\"\"\"\n            return \"1.0.0\"\n        \n        @property\n        def supported_formats(self) -&gt; List[str]: # List of supported audio formats\n        \"Get the plugin version string.\"\n    \n    def supported_formats(self) -&gt; List[str]: # List of supported audio formats\n            \"\"\"Get the list of supported audio file formats.\"\"\"\n            return [\"wav\", \"mp3\", \"flac\", \"m4a\", \"ogg\", \"webm\", \"mp4\", \"avi\", \"mov\"]\n        \n        def get_current_config(self) -&gt; Dict[str, Any]: # Current configuration as dictionary\n        \"Get the list of supported audio file formats.\"\n    \n    def get_current_config(self) -&gt; Dict[str, Any]: # Current configuration as dictionary\n            \"\"\"Return current configuration state.\"\"\"\n            if not self.config\n        \"Return current configuration state.\"\n    \n    def get_config_schema(self) -&gt; Dict[str, Any]: # JSON Schema for configuration\n            \"\"\"Return JSON Schema for UI generation.\"\"\"\n            return dataclass_to_jsonschema(VoxtralVLLMPluginConfig)\n    \n        @staticmethod\n        def get_config_dataclass() -&gt; VoxtralVLLMPluginConfig: # Configuration dataclass\n        \"Return JSON Schema for UI generation.\"\n    \n    def get_config_dataclass() -&gt; VoxtralVLLMPluginConfig: # Configuration dataclass\n            \"\"\"Return dataclass describing the plugin's configuration options.\"\"\"\n            return VoxtralVLLMPluginConfig\n        \n        def initialize(\n            self,\n            config: Optional[Any] = None # Configuration dataclass, dict, or None\n        ) -&gt; None\n        \"Return dataclass describing the plugin's configuration options.\"\n    \n    def initialize(\n            self,\n            config: Optional[Any] = None # Configuration dataclass, dict, or None\n        ) -&gt; None\n        \"Initialize or re-configure the plugin (idempotent).\"\n    \n    def execute(\n            self,\n            audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe\n            **kwargs # Additional arguments to override config\n        ) -&gt; TranscriptionResult: # Transcription result with text and metadata\n        \"Transcribe audio using Voxtral via vLLM.\"\n    \n    def is_available(self) -&gt; bool: # True if vLLM and dependencies are available\n            \"\"\"Check if vLLM and required dependencies are available.\"\"\"\n            if not OPENAI_AVAILABLE\n        \"Check if vLLM and required dependencies are available.\"\n    \n    def cleanup(self) -&gt; None:\n            \"\"\"Clean up resources.\"\"\"\n            self.logger.info(\"Cleaning up Voxtral VLLM plugin\")\n            \n            # Stop managed server if running\n            if self.config and self.config.server_mode == \"managed\" and self.server\n        \"Clean up resources.\"",
+    "crumbs": [
+      "cjm-transcription-plugin-voxtral-vllm"
+    ]
+  },
+  {
+    "objectID": "plugin.html",
+    "href": "plugin.html",
+    "title": "Voxtral VLLM Plugin",
+    "section": "",
+    "text": "source",
+    "crumbs": [
+      "Voxtral VLLM Plugin"
+    ]
+  },
+  {
+    "objectID": "plugin.html#testing-the-plugin",
+    "href": "plugin.html#testing-the-plugin",
+    "title": "Voxtral VLLM Plugin",
+    "section": "Testing the Plugin",
+    "text": "Testing the Plugin\n\n# Test basic functionality\nplugin = VoxtralVLLMPlugin()\n\n# Check availability\nprint(f\"Voxtral VLLM available: {plugin.is_available()}\")\nprint(f\"Plugin name: {plugin.name}\")\nprint(f\"Plugin version: {plugin.version}\")\nprint(f\"Supported formats: {plugin.supported_formats}\")\nprint(f\"Supports streaming: {plugin.supports_streaming()}\")\n\nVoxtral VLLM available: True\nPlugin name: voxtral_vllm\nPlugin version: 1.0.0\nSupported formats: ['wav', 'mp3', 'flac', 'm4a', 'ogg', 'webm', 'mp4', 'avi', 'mov']\nSupports streaming: True\n\n\n\n# Test configuration dataclass\nfrom dataclasses import fields\n\nprint(\"Available models:\")\nmodel_field = next(f for f in fields(VoxtralVLLMPluginConfig) if f.name == \"model_id\")\nfor model in model_field.metadata.get(SCHEMA_ENUM, []):\n    print(f\"  - {model}\")\n\nserver_field = next(f for f in fields(VoxtralVLLMPluginConfig) if f.name == \"server_mode\")\nprint(f\"\\nServer modes: {server_field.metadata.get(SCHEMA_ENUM)}\")\n\nAvailable models:\n  - mistralai/Voxtral-Mini-3B-2507\n  - mistralai/Voxtral-Small-24B-2507\n\nServer modes: ['managed', 'external']\n\n\n\n# Test get_config_schema for UI generation\nimport json\n\nschema = plugin.get_config_schema()\nprint(\"JSON Schema for VoxtralVLLMPluginConfig:\")\nprint(f\"  Name: {schema['name']}\")\nprint(f\"  Properties count: {len(schema['properties'])}\")\nprint(f\"  Model field enum: {schema['properties']['model_id'].get('enum', [])}\")\nprint(f\"\\nSample properties:\")\nprint(json.dumps({k: v for k, v in list(schema['properties'].items())[:3]}, indent=2))\n\nJSON Schema for VoxtralVLLMPluginConfig:\n  Name: VoxtralVLLMPluginConfig\n  Properties count: 15\n  Model field enum: ['mistralai/Voxtral-Mini-3B-2507', 'mistralai/Voxtral-Small-24B-2507']\n\nSample properties:\n{\n  \"model_id\": {\n    \"type\": \"string\",\n    \"title\": \"Model ID\",\n    \"description\": \"Voxtral model to use. Mini is faster, Small is more accurate.\",\n    \"enum\": [\n      \"mistralai/Voxtral-Mini-3B-2507\",\n      \"mistralai/Voxtral-Small-24B-2507\"\n    ],\n    \"default\": \"mistralai/Voxtral-Mini-3B-2507\"\n  },\n  \"device\": {\n    \"type\": \"string\",\n    \"title\": \"Device\",\n    \"description\": \"Device for inference (will use CUDA if available)\",\n    \"enum\": [\n      \"cuda\"\n    ],\n    \"default\": \"cuda\"\n  },\n  \"server_mode\": {\n    \"type\": \"string\",\n    \"title\": \"Server Mode\",\n    \"description\": \"'managed': plugin manages server lifecycle, 'external': connect to existing server\",\n    \"enum\": [\n      \"managed\",\n      \"external\"\n    ],\n    \"default\": \"managed\"\n  }\n}\n\n\n\n# Test configuration validation\nfrom dataclasses import asdict\nfrom cjm_plugin_system.utils.validation import extract_defaults\n\nplugin = VoxtralVLLMPlugin()\n\ntest_configs = [\n    ({\"model_id\": \"mistralai/Voxtral-Mini-3B-2507\"}, \"Valid config\"),\n    ({\"model_id\": \"invalid_model\"}, \"Invalid model\"),\n    ({\"server_port\": 9000}, \"Valid port change\"),\n    ({\"temperature\": 2.5}, \"Temperature out of range\"),\n]\n\n# Get defaults for merging\ndefaults = extract_defaults(VoxtralVLLMPluginConfig)\n\nfor config_update, description in test_configs:\n    try:\n        merged = {**defaults, **config_update}\n        test_config = dict_to_config(VoxtralVLLMPluginConfig, merged, validate=True)\n        print(f\"{description}: Valid=True\")\n    except ValueError as e:\n        print(f\"{description}: Valid=False\")\n        print(f\"  Error: {str(e)[:100]}\")\n\nValid config: Valid=True\nInvalid model: Valid=False\n  Error: model_id: 'invalid_model' is not one of ['mistralai/Voxtral-Mini-3B-2507', 'mistralai/Voxtral-Small-\nValid port change: Valid=True\nTemperature out of range: Valid=False\n  Error: temperature: 2.5 is greater than maximum 2.0\n\n\n\n# Test initialization with external server mode\nplugin.initialize({\n    \"model_id\": \"mistralai/Voxtral-Mini-3B-2507\",\n    \"server_mode\": \"external\",\n    \"server_url\": \"http://localhost:8000\"\n})\nprint(f\"Current config mode: {plugin.get_current_config().get('server_mode')}\")\nprint(f\"Current model: {plugin.get_current_config().get('model_id')}\")\n\nCurrent config mode: external\nCurrent model: mistralai/Voxtral-Mini-3B-2507",
+    "crumbs": [
+      "Voxtral VLLM Plugin"
+    ]
+  }
+]

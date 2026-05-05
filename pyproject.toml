@@ -25,6 +25,6 @@ cjm_transcription_plugin_voxtral_vllm = "cjm_transcription_plugin_voxtral_vllm._
 version = {attr = "cjm_transcription_plugin_voxtral_vllm.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["cjm_transcription_plugin_voxtral_vllm"]
+include = ["cjm_transcription_plugin_voxtral_vllm*"]
 
 [tool.nbdev]

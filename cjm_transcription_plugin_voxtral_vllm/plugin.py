@@ -56,6 +56,7 @@ from cjm_transcription_plugin_system.storage import TranscriptionStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
 from cjm_plugin_system.core.errors import (
     PluginInputError, PluginFatalError, PluginTransientError, PluginTimeoutError,
+    PluginResourceError, ResourceShortfall,
 )
 from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
@@ -730,6 +731,41 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 fields_invalid=["audio"],
             )
     
+    def _check_vllm_subprocess_death(
+        self,
+        original_exc: BaseException,  # The exception caught from the HTTP call
+        context: str,                 # Human-readable context for the error message
+    ) -> None:
+        """SG-47 Track B follow-up: classify HTTP failures by vLLM subprocess state.
+
+        If the managed vLLM server subprocess (`self.process`) has exited,
+        the request failure is most likely due to vLLM dying — typically
+        CUDA OOM in the vLLM server during model inference. Raises
+        `PluginResourceError` so substrate's CR-7 reactive-retry can reload
+        + retry. If the process is alive (or external-server mode without
+        a managed process), returns without raising — caller re-raises the
+        original exception which the substrate's default classify_exception()
+        MRO walk handles via CR-5.
+
+        Analogous to CR-7's `_check_worker_death` Track A classifier in the
+        substrate, but applied to the vLLM subprocess (one process layer
+        deeper than the plugin worker). The substrate sees a clean
+        PluginResourceError from the plugin worker rather than the worker
+        itself crashing.
+        """
+        if self.process is not None and self.process.poll() is not None:
+            exit_code = self.process.poll()
+            raise PluginResourceError(
+                f"vLLM server subprocess died during {context} "
+                f"(exit code {exit_code}): {original_exc}. "
+                f"Most likely CUDA OOM in the vLLM server subprocess.",
+                resource_shortfall=ResourceShortfall(
+                    resource='gpu_vram_mb',
+                    needed=0.0,     # Server is dead — can't query exact numbers
+                    available=0.0,  # Same; substrate uses presence of shortfall + CR-7 retry
+                ),
+            ) from original_exc
+
     def execute(
         self,
         audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe
@@ -764,8 +800,15 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 temperature=temperature
             ).to_openai(exclude=("top_p", "seed"))
             
-            # Get transcription from vLLM server
-            response = self.client.audio.transcriptions.create(**req)
+            # Get transcription from vLLM server. SG-47 Track B follow-up: if the
+            # vLLM subprocess dies during this request (typically CUDA OOM in the
+            # vLLM server), classify as PluginResourceError so substrate CR-7
+            # reactive-retry can reload + retry.
+            try:
+                response = self.client.audio.transcriptions.create(**req)
+            except Exception as e:
+                self._check_vllm_subprocess_death(e, context="transcription request")
+                raise  # Server alive (or external mode); substrate default-classifies
             
             # Create transcription result
             transcription_result = TranscriptionResult(
@@ -885,16 +928,28 @@ def execute_stream(
             temperature=temperature
         ).to_openai(exclude=("top_p", "seed"))
         
-        # Get streaming transcription from vLLM server
-        response = self.client.audio.transcriptions.create(**req, stream=True)
-        
-        # Collect generated text
+        # Get streaming transcription from vLLM server. SG-47 Track B follow-up:
+        # wrap the initial create() call AND the streaming iteration; vLLM
+        # subprocess can die at either point. Mid-stream death surfaces as a
+        # streaming-response exception when the next chunk is awaited.
+        try:
+            response = self.client.audio.transcriptions.create(**req, stream=True)
+        except Exception as e:
+            self._check_vllm_subprocess_death(e, context="streaming transcription start")
+            raise
+
+        # Collect generated text. The iteration may raise mid-stream if the
+        # vLLM subprocess crashes; same Track B check applies there.
         generated_text = ""
-        for chunk in response:
-            if chunk.choices[0]['delta']['content']:
-                text_chunk = chunk.choices[0]['delta']['content']
-                generated_text += text_chunk
-                yield text_chunk
+        try:
+            for chunk in response:
+                if chunk.choices[0]['delta']['content']:
+                    text_chunk = chunk.choices[0]['delta']['content']
+                    generated_text += text_chunk
+                    yield text_chunk
+        except Exception as e:
+            self._check_vllm_subprocess_death(e, context="streaming transcription iteration")
+            raise
         
         # Return final result
         return TranscriptionResult(

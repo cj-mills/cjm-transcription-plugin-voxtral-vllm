@@ -462,7 +462,14 @@ class VoxtralVLLMPluginConfig:
         default=8000,
         metadata={
             SCHEMA_TITLE: "Server Port",
-            SCHEMA_DESC: "Port for managed vLLM server",
+            SCHEMA_DESC: (
+                "Port for managed vLLM server. CR-10 multi-instance: when running "
+                "multiple managed vLLM instances simultaneously (e.g., comparison "
+                "feature loading two model variants), set a UNIQUE port per instance "
+                "via the substrate's load_plugin(..., new_instance=True, "
+                "config={'server_port': N}) call — sharing a port between instances "
+                "produces 'port already in use' on the second server's startup."
+            ),
             SCHEMA_MIN: 1024,
             SCHEMA_MAX: 65535
         }

@@ -54,6 +54,9 @@ from cjm_transcription_plugin_system.plugin_interface import TranscriptionPlugin
 from cjm_transcription_plugin_system.core import AudioData, TranscriptionResult
 from cjm_transcription_plugin_system.storage import TranscriptionStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
+from cjm_plugin_system.core.errors import (
+    PluginInputError, PluginFatalError, PluginTransientError, PluginTimeoutError,
+)
 from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_MIN, SCHEMA_MAX, SCHEMA_ENUM
@@ -276,11 +279,15 @@ class VLLMServer:
                 if stderr: error_msg += f"\n[STDERR]:\n{stderr}"
                 
                 print(error_msg) # Print to main log
-                raise RuntimeError(error_msg)
+                # SG-47: server process exited during startup — fatal; operator must fix
+                raise PluginFatalError(error_msg)
             
             time.sleep(0.5)
         
-        raise TimeoutError(f"Server did not start within {timeout} seconds")
+        # SG-47: server-startup timeout maps to typed PluginTimeoutError (CR-5).
+        # PluginTimeoutError subclasses PluginTransientError so substrate-side retry is
+        # opt-in (default_retriable=True but vLLM startup is usually a one-shot affair).
+        raise PluginTimeoutError(f"Server did not start within {timeout} seconds")
     
     def stop(self) -> None: # Returns nothing
         """Stop the vLLM server."""
@@ -672,15 +679,20 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                         show_progress=self.config.capture_server_logs
                     )
                 else:
-                    raise RuntimeError("vLLM server is not running and auto_start_server is disabled")
+                    # SG-47: config combo (auto_start_server=False, no external server)
+                    # is operator-misconfigured at execute-time; fatal until reconfigured.
+                    raise PluginFatalError("vLLM server is not running and auto_start_server is disabled")
         elif self.config.server_mode == "external":
             # Check if external server is accessible
             try:
                 response = requests.get(f"{self.config.server_url}/health", timeout=5)
                 if response.status_code != 200:
-                    raise RuntimeError(f"External vLLM server returned status {response.status_code}")
+                    # SG-47: external server unhealthy — transient; substrate retry plausible
+                    # if server self-recovers.
+                    raise PluginTransientError(f"External vLLM server returned status {response.status_code}")
             except requests.exceptions.RequestException as e:
-                raise RuntimeError(f"Cannot connect to external vLLM server: {e}")
+                # SG-47: network failure → transient; substrate retry may succeed.
+                raise PluginTransientError(f"Cannot connect to external vLLM server: {e}") from e
     
     def _prepare_audio(
         self,
@@ -713,7 +725,10 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 sf.write(tmp_file.name, audio_array, audio.sample_rate)
                 return tmp_file.name
         else:
-            raise ValueError(f"Unsupported audio input type: {type(audio)}")
+            raise PluginInputError(  # SG-47: typed input-validation (multi-inherits ValueError)
+                f"Unsupported audio input type: {type(audio)}",
+                fields_invalid=["audio"],
+            )
     
     def execute(
         self,

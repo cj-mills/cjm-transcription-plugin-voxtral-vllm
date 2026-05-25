@@ -51,7 +51,7 @@ except ImportError:
     MISTRAL_COMMON_AVAILABLE = False
     
 from cjm_transcription_plugin_system.plugin_interface import TranscriptionPlugin
-from cjm_transcription_plugin_system.core import AudioData, TranscriptionResult
+from cjm_transcription_plugin_system.core import TranscriptionResult
 from cjm_transcription_plugin_system.storage import TranscriptionStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
 from cjm_plugin_system.core.errors import (
@@ -704,40 +704,19 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     
     def _prepare_audio(
         self,
-        audio: Union[AudioData, str, Path] # Audio data, file path, or Path object to prepare
-    ) -> str: # Path to the prepared audio file
-        """Prepare audio for Voxtral processing."""
+        audio: Union[str, Path] # Path to a decodable audio file
+    ) -> str: # The audio file path
+        """Validate the audio input and return it as a path string.
+
+        The caller (orchestration / proxy) guarantees a model-ready audio file;
+        in-memory preparation is no longer a plugin responsibility."""
         if isinstance(audio, (str, Path)):
-            # Already a file path
             return str(audio)
-        
-        elif isinstance(audio, AudioData):
-            # Save AudioData to temporary file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                # Ensure audio is in the correct format
-                audio_array = audio.samples
-                
-                # If stereo, convert to mono
-                if audio_array.ndim > 1:
-                    audio_array = audio_array.mean(axis=1)
-                
-                # Ensure float32 and normalized
-                if audio_array.dtype != np.float32:
-                    audio_array = audio_array.astype(np.float32)
-                
-                # Normalize if needed
-                if audio_array.max() > 1.0:
-                    audio_array = audio_array / np.abs(audio_array).max()
-                
-                # Save to file
-                sf.write(tmp_file.name, audio_array, audio.sample_rate)
-                return tmp_file.name
-        else:
-            raise PluginInputError(  # SG-47: typed input-validation (multi-inherits ValueError)
-                f"Unsupported audio input type: {type(audio)}",
-                fields_invalid=["audio"],
-            )
-    
+        raise PluginInputError(  # SG-47: typed input-validation (multi-inherits ValueError)
+            f"Unsupported audio input type: {type(audio)}; expected a file path (str or Path)",
+            fields_invalid=["audio"],
+        )
+
     def _check_vllm_subprocess_death(
         self,
         original_exc: BaseException,  # The exception caught from the HTTP call
@@ -775,7 +754,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
 
     def execute(
         self,
-        audio: Union[AudioData, str, Path], # Audio data or path to audio file to transcribe
+        audio: Union[str, Path], # Audio data or path to audio file to transcribe
         **kwargs # Additional arguments to override config
     ) -> TranscriptionResult: # Transcription result with text and metadata
         """Transcribe audio using Voxtral via vLLM."""
@@ -784,7 +763,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         
         # Prepare audio file
         audio_path = self._prepare_audio(audio)
-        temp_file_created = not isinstance(audio, (str, Path))
+        temp_file_created = False  # caller provides a model-ready path; plugin never creates a temp file
         
         # Hash the audio file before transcription
         audio_hash = hash_file(audio_path)
@@ -833,26 +812,18 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             # Hash the transcription output
             text_hash = hash_bytes(transcription_result.text.encode())
             
-            # Determine the original audio path for DB storage
-            original_path = str(audio)
-            if hasattr(audio, 'to_temp_file'):
-                original_path = "in_memory_data"
-            
-            # Save to standardized storage
+            # Save to standardized storage (helper logs success/failure; never raises)
             job_id = kwargs.get("job_id", str(uuid4()))
-            try:
-                self.storage.save(
-                    job_id=job_id,
-                    audio_path=original_path,
-                    audio_hash=audio_hash,
-                    text=transcription_result.text,
-                    text_hash=text_hash,
-                    segments=transcription_result.segments,
-                    metadata=transcription_result.metadata
-                )
-                self.logger.info(f"Saved result to DB (Job: {job_id})")
-            except Exception as e:
-                self.logger.error(f"Failed to save to DB: {e}")
+            self.storage.save_with_logging(
+                job_id=job_id,
+                audio_path=str(audio),
+                audio_hash=audio_hash,
+                text=transcription_result.text,
+                text_hash=text_hash,
+                segments=transcription_result.segments,
+                metadata=transcription_result.metadata,
+                logger=self.logger,
+            )
             
             self.logger.info(f"Transcription completed: {len(response.text.split())} words")
             return transcription_result
@@ -906,7 +877,7 @@ def supports_streaming(
 @patch
 def execute_stream(
     self: VoxtralVLLMPlugin, # The plugin instance
-    audio: Union[AudioData, str, Path], # Audio data or path to audio file
+    audio: Union[str, Path], # Audio data or path to audio file
     **kwargs # Additional plugin-specific parameters
 ) -> Generator[str, None, TranscriptionResult]: # Yields text chunks, returns final result
     """Stream transcription results chunk by chunk."""
@@ -915,7 +886,7 @@ def execute_stream(
     
     # Prepare audio file
     audio_path = self._prepare_audio(audio)
-    temp_file_created = not isinstance(audio, (str, Path))
+    temp_file_created = False  # caller provides a model-ready path; plugin never creates a temp file
     
     try:
         # Get config values, allowing kwargs overrides

@@ -156,15 +156,7 @@ class VLLMServer:
         
         # Print if we're capturing logs
         if self.capture_logs:
-            # Color code based on log level
-            if "ERROR" in line:
-                print(f"\033[91m{line}\033[0m")  # Red
-            elif "WARNING" in line:
-                print(f"\033[93m{line}\033[0m")  # Yellow
-            elif "INFO" in line:
-                print(f"\033[94m{line}\033[0m")  # Blue
-            else:
-                print(line)
+            print(line)
     
     def _log_reader(
         self, 
@@ -678,7 +670,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         """Ensure the vLLM server is running (for managed mode)."""
         if self.config.server_mode == "managed" and self.server:
             if not self.server.is_running():
-                print("\n\nSERVER IS NOT RUNNING\n\n")
+                self.logger.warning("vLLM server is not running")
                 if self.config.auto_start_server:
                     self.logger.info("Starting vLLM server...")
                     self.server.start(

@@ -21,8 +21,8 @@ Total: 2 notebooks
 
 ``` mermaid
 graph LR
-    meta[meta<br/>Metadata]
-    plugin[plugin<br/>Voxtral VLLM Plugin]
+    meta["meta<br/>Metadata"]
+    plugin["plugin<br/>Voxtral VLLM Plugin"]
 
     plugin --> meta
 ```

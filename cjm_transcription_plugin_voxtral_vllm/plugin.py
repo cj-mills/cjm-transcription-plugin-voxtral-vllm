@@ -867,7 +867,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                 audio=input_audio,
                 language=language or "en",
                 temperature=temperature
-            ).to_openai(exclude=("top_p", "seed"))
+            ).to_openai(exclude=("top_p", "seed", "target_streaming_delay_ms"))
             
             # Get transcription from vLLM server. SG-47 Track B follow-up: if the
             # vLLM subprocess dies during this request (typically CUDA OOM in the
@@ -979,7 +979,7 @@ def execute_stream(
             audio=input_audio,
             language=language or "en",
             temperature=temperature
-        ).to_openai(exclude=("top_p", "seed"))
+        ).to_openai(exclude=("top_p", "seed", "target_streaming_delay_ms"))
         
         # Get streaming transcription from vLLM server. SG-47 Track B follow-up:
         # wrap the initial create() call AND the streaming iteration; vLLM

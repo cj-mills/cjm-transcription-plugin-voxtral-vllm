@@ -195,7 +195,6 @@ class VoxtralVLLMPluginConfig:
     max_model_len: int = field(...)
     language: Optional[str] = field(...)
     temperature: float = field(...)
-    streaming: bool = field(...)
     server_startup_timeout: int = field(...)
     auto_start_server: bool = field(...)
     capture_server_logs: bool = field(...)
@@ -217,21 +216,21 @@ class VoxtralVLLMPlugin:
             self.config: VoxtralVLLMPluginConfig = None
         "Initialize the Voxtral VLLM plugin with default configuration."
     
-    def name(self) -> str: # The plugin name identifier
-            """Get the plugin name identifier."""
-            return "voxtral_vllm"
-        
-        @property
-        def version(self) -> str: # The plugin version string
-        "Get the plugin name identifier."
+    def name(self) -> str:  # The plugin name identifier
+            """Get the plugin name identifier (single source of truth: meta.py)."""
+            return get_plugin_metadata()["name"]
     
-    def version(self) -> str: # The plugin version string
-            """Get the plugin version string."""
-            return "1.0.0"
+        @property
+        def version(self) -> str:  # The plugin version string
+        "Get the plugin name identifier (single source of truth: meta.py)."
+    
+    def version(self) -> str:  # The plugin version string
+            """Get the plugin version string (single source of truth: meta.py / __version__)."""
+            return get_plugin_metadata()["version"]
         
         @property
         def supported_formats(self) -> List[str]: # List of supported audio formats
-        "Get the plugin version string."
+        "Get the plugin version string (single source of truth: meta.py / __version__)."
     
     def supported_formats(self) -> List[str]: # List of supported audio formats
             """Get the list of supported audio file formats."""
@@ -257,17 +256,45 @@ class VoxtralVLLMPlugin:
             """Return dataclass describing the plugin's configuration options."""
             return VoxtralVLLMPluginConfig
         
-        def initialize(
+        def _apply_config(
             self,
-            config: Optional[Any] = None # Configuration dataclass, dict, or None
+            config: Optional[Any] = None  # Configuration dataclass, dict, or None
         ) -> None
         "Return dataclass describing the plugin's configuration options."
     
     def initialize(
             self,
-            config: Optional[Any] = None # Configuration dataclass, dict, or None
+            config: Optional[Any] = None  # Configuration dataclass, dict, or None
         ) -> None
-        "Initialize or re-configure the plugin (idempotent)."
+        "First-time setup. CR-4: the manual server-restart diff-checks are
+replaced by declarative RELOAD_TRIGGER metadata; the substrate's
+reconfigure path fires `_release_vllm_server` then re-applies config
+via `_apply_config`."
+    
+    def prefetch(self) -> None:
+            """CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
+            execute() doesn't pay the startup cost (model load, CUDA graph capture,
+            weight download for cold caches). No-op in external mode (caller
+            manages the server). Idempotent via `_ensure_server_running`'s
+            is_running() check.
+            """
+            if self.config and self.config.server_mode == "managed"
+        "CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
+execute() doesn't pay the startup cost (model load, CUDA graph capture,
+weight download for cold caches). No-op in external mode (caller
+manages the server). Idempotent via `_ensure_server_running`'s
+is_running() check."
+    
+    def on_disable(self) -> None:
+            """CR-2: release the vLLM server subprocess when the operator disables
+            the plugin while keeping the worker alive. Re-enable + next execute
+            lazy-respawns via `_ensure_server_running`."""
+            self._release_vllm_server()
+        
+        def _ensure_server_running(self) -> None
+        "CR-2: release the vLLM server subprocess when the operator disables
+the plugin while keeping the worker alive. Re-enable + next execute
+lazy-respawns via `_ensure_server_running`."
     
     def execute(
             self,
@@ -281,11 +308,8 @@ class VoxtralVLLMPlugin:
             if not OPENAI_AVAILABLE
         "Check if vLLM and required dependencies are available."
     
-    def cleanup(self) -> None:
-            """Clean up resources."""
-            self.logger.info("Cleaning up Voxtral VLLM plugin")
-            
-            # Stop managed server if running
-            if self.config and self.config.server_mode == "managed" and self.server
-        "Clean up resources."
+    def cleanup(self) -> None
+        "Release resources on unload. CR-4: delegates to `_release_vllm_server`
+so both the worker-unload path AND the operator-disable / reconfigure
+paths converge on one release implementation."
 ```

@@ -62,6 +62,7 @@ from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_MIN, SCHEMA_MAX, SCHEMA_ENUM
 )
+from cjm_plugin_system.core.interface import RELOAD_TRIGGER  # CR-4 declarative reload metadata
 
 from cjm_transcription_plugin_voxtral_vllm.meta import (
     get_plugin_metadata
@@ -424,7 +425,8 @@ class VoxtralVLLMPluginConfig:
         metadata={
             SCHEMA_TITLE: "Model ID",
             SCHEMA_DESC: "Voxtral model to use. Mini is faster, Small is more accurate.",
-            SCHEMA_ENUM: ["mistralai/Voxtral-Mini-3B-2507", "mistralai/Voxtral-Small-24B-2507"]
+            SCHEMA_ENUM: ["mistralai/Voxtral-Mini-3B-2507", "mistralai/Voxtral-Small-24B-2507"],
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: model change requires vLLM server respawn
         }
     )
     device:str = field(
@@ -440,14 +442,16 @@ class VoxtralVLLMPluginConfig:
         metadata={
             SCHEMA_TITLE: "Server Mode",
             SCHEMA_DESC: "'managed': plugin manages server lifecycle, 'external': connect to existing server",
-            SCHEMA_ENUM: ["managed", "external"]
+            SCHEMA_ENUM: ["managed", "external"],
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: managed<->external switch rebuilds server + client
         }
     )
     server_url:str = field(
         default="http://localhost:8000",
         metadata={
             SCHEMA_TITLE: "Server URL",
-            SCHEMA_DESC: "vLLM server URL (for external mode)"
+            SCHEMA_DESC: "vLLM server URL (for external mode)",
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: external client base_url change rebuilds client; no-op for managed
         }
     )
     server_port:int = field(
@@ -463,7 +467,8 @@ class VoxtralVLLMPluginConfig:
                 "produces 'port already in use' on the second server's startup."
             ),
             SCHEMA_MIN: 1024,
-            SCHEMA_MAX: 65535
+            SCHEMA_MAX: 65535,
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: port change requires managed-server respawn
         }
     )
     gpu_memory_utilization:float = field(
@@ -472,7 +477,8 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_TITLE: "GPU Memory Utilization",
             SCHEMA_DESC: "Fraction of GPU memory to use (managed mode)",
             SCHEMA_MIN: 0.1,
-            SCHEMA_MAX: 1.0
+            SCHEMA_MAX: 1.0,
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: vLLM allocator is fixed at server boot
         }
     )
     max_model_len:int = field(
@@ -481,7 +487,8 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_TITLE: "Max Model Length",
             SCHEMA_DESC: "Maximum sequence length for the model",
             SCHEMA_MIN: 1024,
-            SCHEMA_MAX: 131072
+            SCHEMA_MAX: 131072,
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: vLLM KV-cache shape fixed at server boot
         }
     )
     language:Optional[str] = field(
@@ -498,13 +505,6 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_DESC: "Temperature for sampling (0.0 for deterministic)",
             SCHEMA_MIN: 0.0,
             SCHEMA_MAX: 2.0
-        }
-    )
-    streaming:bool = field(
-        default=False,
-        metadata={
-            SCHEMA_TITLE: "Streaming",
-            SCHEMA_DESC: "Enable streaming output by default"
         }
     )
     server_startup_timeout:int = field(
@@ -527,7 +527,8 @@ class VoxtralVLLMPluginConfig:
         default=True,
         metadata={
             SCHEMA_TITLE: "Capture Server Logs",
-            SCHEMA_DESC: "Capture vLLM server logs (managed mode)"
+            SCHEMA_DESC: "Capture vLLM server logs (managed mode)",
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: log-reader threads are wired at VLLMServer.__init__
         }
     )
     dtype:str = field(
@@ -535,7 +536,8 @@ class VoxtralVLLMPluginConfig:
         metadata={
             SCHEMA_TITLE: "Data Type",
             SCHEMA_DESC: "Data type for model weights",
-            SCHEMA_ENUM: ["auto", "half", "float16", "bfloat16", "float32"]
+            SCHEMA_ENUM: ["auto", "half", "float16", "bfloat16", "float32"],
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: weight dtype baked at server boot
         }
     )
     tensor_parallel_size:int = field(
@@ -544,7 +546,8 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_TITLE: "Tensor Parallel Size",
             SCHEMA_DESC: "Number of GPUs for tensor parallelism",
             SCHEMA_MIN: 1,
-            SCHEMA_MAX: 8
+            SCHEMA_MAX: 8,
+            RELOAD_TRIGGER: "vllm_server",  # CR-4: TP topology fixed at server boot
         }
     )
 
@@ -564,14 +567,14 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         self.storage: Optional[TranscriptionStorage] = None
     
     @property
-    def name(self) -> str: # The plugin name identifier
-        """Get the plugin name identifier."""
-        return "voxtral_vllm"
-    
+    def name(self) -> str:  # The plugin name identifier
+        """Get the plugin name identifier (single source of truth: meta.py)."""
+        return get_plugin_metadata()["name"]
+
     @property
-    def version(self) -> str: # The plugin version string
-        """Get the plugin version string."""
-        return "1.0.0"
+    def version(self) -> str:  # The plugin version string
+        """Get the plugin version string (single source of truth: meta.py / __version__)."""
+        return get_plugin_metadata()["version"]
     
     @property
     def supported_formats(self) -> List[str]: # List of supported audio formats
@@ -593,50 +596,27 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         """Return dataclass describing the plugin's configuration options."""
         return VoxtralVLLMPluginConfig
     
-    def initialize(
+    def _apply_config(
         self,
-        config: Optional[Any] = None # Configuration dataclass, dict, or None
+        config: Optional[Any] = None  # Configuration dataclass, dict, or None
     ) -> None:
-        """Initialize or re-configure the plugin (idempotent)."""
-        # Parse new config
-        new_config = dict_to_config(VoxtralVLLMPluginConfig, config or {})
-        
-        # Determine if we need to restart server
-        needs_server_restart = False
-        
-        if self.config:
-            # Check if model changed
-            if self.config.model_id != new_config.model_id:
-                self.logger.info(f"Config change: Model {self.config.model_id} -> {new_config.model_id}")
-                needs_server_restart = True
-            
-            # Check if server mode changed
-            if self.config.server_mode != new_config.server_mode:
-                self.logger.info(f"Config change: Server mode {self.config.server_mode} -> {new_config.server_mode}")
-                needs_server_restart = True
-            
-            # Check if server port changed (managed mode)
-            if self.config.server_port != new_config.server_port:
-                self.logger.info(f"Config change: Server port {self.config.server_port} -> {new_config.server_port}")
-                needs_server_restart = True
-        else:
-            # First initialization
-            needs_server_restart = True
-        
-        # Stop existing server if config requires restart
-        if needs_server_restart and self.server and self.server.is_running():
-            self.logger.info("Stopping existing server for reconfiguration")
-            self.server.stop()
-            self.server = None
-        
-        # Apply new config
-        self.config = new_config
+        """CR-4: apply config + (re)build the VLLMServer (managed mode) and OpenAI client.
+
+        No-heavy-resource setup other than constructing the VLLMServer wrapper —
+        the actual subprocess spawn is deferred to `prefetch()` / first execute
+        via `_ensure_server_running()`. Called by `initialize` for first-time
+        setup and by the substrate's `reconfigure_with_triggers` delta path
+        AFTER `_release_vllm_server` has fired for any changed RELOAD_TRIGGER
+        field. The manual diff-and-reload block that used to live in
+        `initialize()` is replaced by the declarative RELOAD_TRIGGER metadata
+        on the config dataclass fields above (CR-4 Track 5).
+        """
+        self.config = dict_to_config(VoxtralVLLMPluginConfig, config or {})
         self.model_id = self.config.model_id
-        
-        # Initialize based on server mode
+
+        # Build VLLMServer wrapper for managed mode (subprocess spawn happens later).
         if self.config.server_mode == "managed":
-            # Create managed server instance (but don't start yet)
-            if needs_server_restart or self.server is None:
+            if self.server is None:
                 self.server = VLLMServer(
                     model=self.model_id,
                     port=self.config.server_port,
@@ -644,27 +624,79 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                     max_model_len=self.config.max_model_len,
                     capture_logs=self.config.capture_server_logs,
                     dtype=self.config.dtype,
-                    tensor_parallel_size=self.config.tensor_parallel_size
+                    tensor_parallel_size=self.config.tensor_parallel_size,
                 )
             server_url = f"http://localhost:{self.config.server_port}"
         else:
-            # External server mode
+            # External-server mode: caller manages the vLLM server lifecycle.
             server_url = self.config.server_url
-        
-        # Create OpenAI client
-        self.client = OpenAI(
-            api_key="EMPTY",  # vLLM doesn't require API key
-            base_url=f"{server_url}/v1"
-        )
-        
-        # Initialize standardized storage
+
+        # OpenAI-compatible client (vLLM's server speaks this protocol).
+        # Lazy: rebuild only when _release_vllm_server has cleared it. Since
+        # every base_url-affecting field (server_mode/server_url/server_port)
+        # is a RELOAD_TRIGGER, the substrate's reconfigure path always passes
+        # through _release_vllm_server (which sets self.client = None) before
+        # re-entering _apply_config — so a None check is sufficient + avoids
+        # client churn on unrelated config changes (e.g. temperature).
+        if self.client is None:
+            self.client = OpenAI(
+                api_key="EMPTY",  # vLLM doesn't require an API key
+                base_url=f"{server_url}/v1",
+            )
+
+    def _release_vllm_server(self) -> None:
+        """CR-4: release the managed vLLM server subprocess + the OpenAI client.
+
+        Called by the substrate's `reconfigure_with_triggers` BEFORE
+        `_apply_config` rebuilds them, whenever any RELOAD_TRIGGER="vllm_server"
+        field changes. Also called from `on_disable()` (operator-initiated
+        disable while the worker stays alive) and `cleanup()` (worker unload).
+        Idempotent: safe to call when the server is already stopped or the
+        client is already None.
+        """
+        if self.server is not None:
+            if self.server.is_running():
+                self.logger.info("Releasing managed vLLM server subprocess")
+                self.server.stop()
+            self.server = None
+        # Client recreation is cheap; drop it eagerly so any stale base_url
+        # / api_key state can't survive into the next _apply_config.
+        self.client = None
+
+    def initialize(
+        self,
+        config: Optional[Any] = None  # Configuration dataclass, dict, or None
+    ) -> None:
+        """First-time setup. CR-4: the manual server-restart diff-checks are
+        replaced by declarative RELOAD_TRIGGER metadata; the substrate's
+        reconfigure path fires `_release_vllm_server` then re-applies config
+        via `_apply_config`."""
+        self._apply_config(config)
+
+        # One-time storage initialization (DB path is install-fixed, not config-derived).
         db_path = get_plugin_metadata()["db_path"]
         self.storage = TranscriptionStorage(db_path)
-        
+
         self.logger.info(
             f"Initialized Voxtral VLLM plugin with model '{self.model_id}' "
             f"in {self.config.server_mode} mode"
         )
+
+    def prefetch(self) -> None:
+        """CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
+        execute() doesn't pay the startup cost (model load, CUDA graph capture,
+        weight download for cold caches). No-op in external mode (caller
+        manages the server). Idempotent via `_ensure_server_running`'s
+        is_running() check.
+        """
+        if self.config and self.config.server_mode == "managed":
+            self._ensure_server_running()
+
+    def on_disable(self) -> None:
+        """CR-2: release the vLLM server subprocess when the operator disables
+        the plugin while keeping the worker alive. Re-enable + next execute
+        lazy-respawns via `_ensure_server_running`."""
+        self._release_vllm_server()
     
     def _ensure_server_running(self) -> None:
         """Ensure the vLLM server is running (for managed mode)."""
@@ -716,7 +748,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     ) -> None:
         """SG-47 Track B follow-up: classify HTTP failures by vLLM subprocess state.
 
-        If the managed vLLM server subprocess (`self.process`) has exited,
+        If the managed vLLM server subprocess (`self.server.process`) has exited,
         the request failure is most likely due to vLLM dying — typically
         CUDA OOM in the vLLM server during model inference. Raises
         `PluginResourceError` so substrate's CR-7 reactive-retry can reload
@@ -731,11 +763,18 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         PluginResourceError from the plugin worker rather than the worker
         itself crashing.
         """
-        if self.process is not None and self.process.poll() is not None:
-            exit_code = self.process.poll()
+        # SG-47 Track B follow-up fix: the prior code referenced `self.process`,
+        # but the plugin doesn't own a Popen directly — the managed-mode
+        # `VLLMServer` wrapper does. Access via `self.server.process`; external
+        # mode (no managed server) returns without raising.
+        server = self.server
+        if server is None or server.process is None:
+            return
+        rc = server.process.poll()
+        if rc is not None:
             raise PluginResourceError(
                 f"vLLM server subprocess died during {context} "
-                f"(exit code {exit_code}): {original_exc}. "
+                f"(exit code {rc}): {original_exc}. "
                 f"Most likely CUDA OOM in the vLLM server subprocess.",
                 resource_shortfall=ResourceShortfall(
                     resource='gpu_vram_mb',
@@ -843,19 +882,11 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             return False
     
     def cleanup(self) -> None:
-        """Clean up resources."""
+        """Release resources on unload. CR-4: delegates to `_release_vllm_server`
+        so both the worker-unload path AND the operator-disable / reconfigure
+        paths converge on one release implementation."""
         self.logger.info("Cleaning up Voxtral VLLM plugin")
-        
-        # Stop managed server if running
-        if self.config and self.config.server_mode == "managed" and self.server:
-            if self.server.is_running():
-                self.logger.info("Stopping managed vLLM server")
-                self.server.stop()
-            self.server = None
-        
-        # Clear client
-        self.client = None
-        
+        self._release_vllm_server()
         self.logger.info("Cleanup completed successfully")
 
 # %% ../nbs/plugin.ipynb #99ef2767

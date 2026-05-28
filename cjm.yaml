@@ -1,0 +1,29 @@
+# cjm.yaml - Project-level configuration
+
+runtime:
+  # "local" = project-local runtime, "system" = use system conda
+  mode: local
+
+  # Conda implementation: "micromamba", "miniforge", or "conda"
+  conda_type: micromamba
+
+  # Path to runtime directory (relative to project root)
+  prefix: ./runtime
+
+  # Platform-specific binaries (for bundled apps)
+  # If not specified, downloaded on first run
+  binaries:
+    linux-x64: ./runtime/bin/micromamba
+    linux-arm64: ./runtime/bin/micromamba
+    darwin-x64: ./runtime/bin/micromamba
+    darwin-arm64: ./runtime/bin/micromamba
+    win-x64: ./runtime/bin/micromamba.exe
+
+# Project-local data directory
+data_dir: ./.cjm
+
+# Plugins configuration file
+plugins_config: ./plugins.yaml
+
+# Shared model storage (platform-independent)
+models_dir: ./models

@@ -153,7 +153,11 @@ checklink/cookies.txt
 
 
 # Custom
-/test_files/*
 /examples/vllm/
 /examples/.ipynb_checkpoints/*
 /.claude/
+/configs/
+/.cjm/
+/runtime/
+/models/
+/test_files/

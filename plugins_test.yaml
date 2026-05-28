@@ -1,0 +1,53 @@
+plugins:
+  # ----------------------------------------------------------------
+  # Infrastructure Worker: NVIDIA Monitor
+  # Requires nvitop, lightweight python env
+  # ----------------------------------------------------------------
+  - name: sys-mon-nvidia
+    env_name: test-sys-mon
+    
+    # Environment File (System Deps)
+    env_file: "https://raw.githubusercontent.com/cj-mills/cjm-system-monitor-nvidia/main/environment.yml"
+    
+    # The Plugin Package
+    package: "git+https://github.com/cj-mills/cjm-system-monitor-nvidia.git"
+    
+    # Interface Libraries
+    # Note: Requires cjm-infra-plugin-system for the SystemStats DTO
+    interface_libs:
+      - "/mnt/SN850X_8TB_EXT4/Projects/GitHub/cj-mills/cjm-plugin-system/"
+      - "git+https://github.com/cj-mills/cjm-infra-plugin-system.git"
+
+  # ----------------------------------------------------------------
+  # Transcription: voxtral-vllm (this library)
+  # ----------------------------------------------------------------
+  - name: voxtral-vllm
+    env_name: test-voxtral-vllm
+
+    # Environment File
+    env_file: "./environment.yml"
+
+    # The Plugin Package
+    package: "/mnt/SN850X_8TB_EXT4/Projects/GitHub/cj-mills/cjm-transcription-plugin-voxtral-vllm/"
+
+    # Interface Libraries
+    interface_libs:
+      - "/mnt/SN850X_8TB_EXT4/Projects/GitHub/cj-mills/cjm-plugin-system/"
+      - "git+https://github.com/cj-mills/cjm-transcription-plugin-system.git"
+
+  # ----------------------------------------------------------------
+  # Media Processing: ffmpeg
+  # ----------------------------------------------------------------
+  - name: ffmpeg
+    env_name: test-ffmpeg
+    
+    # Environment File
+    env_file: "https://raw.githubusercontent.com/cj-mills/cjm-media-plugin-ffmpeg/main/environment.yml"
+    
+    # The Plugin Package
+    package: "git+https://github.com/cj-mills/cjm-media-plugin-ffmpeg.git"
+    
+    # Interface Libraries
+    interface_libs:
+      - "/mnt/SN850X_8TB_EXT4/Projects/GitHub/cj-mills/cjm-plugin-system/"
+      - "git+https://github.com/cj-mills/cjm-media-plugin-system.git"

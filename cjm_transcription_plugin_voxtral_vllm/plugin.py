@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
-from typing import Dict, Any, Optional, List, Union, Generator
+from typing import Callable, Dict, Any, Optional, List, Union, Generator
 import tempfile
 import warnings
 from threading import Thread
@@ -55,7 +55,7 @@ from cjm_transcription_plugin_system.core import TranscriptionResult
 from cjm_transcription_plugin_system.storage import TranscriptionStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
 from cjm_plugin_system.core.errors import (
-    PluginInputError, PluginFatalError, PluginTransientError, PluginTimeoutError,
+    PluginInputError, PluginFatalError, PluginTransientError,
     PluginResourceError, ResourceShortfall,
 )
 from cjm_plugin_system.utils.validation import (
@@ -177,12 +177,22 @@ class VLLMServer:
                     self._process_log_line(line.strip())
     
     def start(
-        self, 
-        wait_for_ready: bool = True, # Wait for server to be ready before returning
-        timeout: int = 120, # Maximum seconds to wait for server readiness
-        show_progress: bool = True # Show progress indicators during startup
+        self,
+        wait_for_ready: bool = True,                                 # Wait for server to be ready before returning
+        show_progress: bool = True,                                  # Show progress indicators during startup
+        report_progress: Optional[Callable[[float, str], None]] = None,  # Substrate's PluginInterface.report_progress; defeats prefetch stall detection
     ) -> None: # Returns nothing
-        """Start the vLLM server."""
+        """Start the vLLM server.
+
+        Session A 2026-05-27: dropped the wall-clock `timeout` argument — startup
+        time is unbounded (model download + CUDA graph capture), and any operator-
+        set value would either race a slow network or be conservatively huge. The
+        substrate's proxy.prefetch now drives stall detection via the
+        report_progress callback (no progress update for SubstrateConfig.
+        prefetch_stall_threshold_seconds → substrate SIGTERMs the worker). When
+        report_progress is None we still loop forever; only the OS / operator can
+        abort.
+        """
         if self.is_running():
             print("Server is already running")
             return
@@ -224,15 +234,25 @@ class VLLMServer:
         atexit.register(self.stop)
         
         if wait_for_ready:
-            self._wait_for_server(timeout, show_progress)
+            self._wait_for_server(show_progress, report_progress=report_progress)
     
     def _wait_for_server(
-        self, 
-        timeout: int, # Maximum seconds to wait
-        show_progress: bool # Whether to show progress indicators
+        self,
+        show_progress: bool,                                          # Whether to print phase indicators
+        report_progress: Optional[Callable[[float, str], None]] = None,  # Substrate's report_progress callback; called on every log line
     ) -> None: # Returns nothing
-        """Wait for server to be ready to accept requests."""
-        start_time = time.time()
+        """Wait for server to be ready to accept requests.
+
+        Session A 2026-05-27: no wall-clock timeout — loops until the server's
+        /health returns 200 OR the vLLM Popen exits non-zero. On each log line
+        consumed, calls report_progress(0.5, phase_or_line_summary) — the
+        substrate's proxy.prefetch polls /progress and SIGTERMs the worker if
+        the (progress, message) tuple stops advancing for
+        SubstrateConfig.prefetch_stall_threshold_seconds. Operator-tunable
+        substrate-side; the plugin no longer carries a server_startup_timeout
+        field (operators were racing arbitrary timeouts against network speeds
+        for the model download).
+        """
         last_status = ""
         phases = {
             "detected platform": "🔍 Detecting platform...",
@@ -242,46 +262,62 @@ class VLLMServer:
             "Graph capturing": "📊 Capturing CUDA graphs...",
             "Graph capturing finished": "✅ CUDA graphs ready",
             "Starting vLLM API server": "🚀 Starting API server...",
-            "Available routes": "✅ Server ready!"
+            "Available routes": "✅ Server ready!",
         }
-        
-        while time.time() - start_time < timeout:
-            if show_progress and not self.log_queue.empty():
-                try:
-                    log_line = self.log_queue.get_nowait()
-                    for key, status_msg in phases.items():
-                        if key in log_line:
-                            if status_msg != last_status:
-                                print(f"\n  {status_msg}")
-                                last_status = status_msg
-                            break
-                except queue.Empty: pass
-            
+
+        while True:
+            # Drain a log line if available; advance phase + emit progress for stall detection.
+            try:
+                log_line = self.log_queue.get_nowait()
+            except queue.Empty:
+                log_line = None
+            if log_line:
+                detected_status: Optional[str] = None
+                for key, status_msg in phases.items():
+                    if key in log_line:
+                        detected_status = status_msg
+                        break
+                if show_progress and detected_status and detected_status != last_status:
+                    print(f"\n  {detected_status}")
+                    last_status = detected_status
+                if report_progress is not None:
+                    # Substrate consumes (progress, message) tuple advances to defeat
+                    # the prefetch stall counter. Use 0.5 as a "still-progressing"
+                    # signal (vLLM startup has no calibrated 0..1 axis); the message
+                    # carries the phase or a clipped log line for operator visibility.
+                    summary = detected_status or log_line[:120]
+                    try:
+                        report_progress(0.5, f"vLLM: {summary}")
+                    except Exception:
+                        # report_progress is best-effort plumbing; never let it
+                        # break server startup.
+                        pass
+
+            # Ready check.
             try:
                 response = requests.get(f"{self.base_url}/health", timeout=1)
                 if response.status_code == 200:
                     print(f"\n✅ vLLM server is ready at {self.base_url}")
+                    if report_progress is not None:
+                        try:
+                            report_progress(1.0, f"vLLM server ready at {self.base_url}")
+                        except Exception:
+                            pass
                     return
-            except requests.exceptions.RequestException: pass
-            
-            # Crash Reporting
+            except requests.exceptions.RequestException:
+                pass
+
+            # Crash reporting (substrate's Popen.poll-on-crash check).
             if self.process.poll() is not None:
-                # Read whatever is left in the pipes to see the error
                 stdout, stderr = self.process.communicate()
                 error_msg = f"Server process exited with code {self.process.poll()}"
                 if stdout: error_msg += f"\n[STDOUT]:\n{stdout}"
                 if stderr: error_msg += f"\n[STDERR]:\n{stderr}"
-                
-                print(error_msg) # Print to main log
+                print(error_msg)  # Tee to worker log
                 # SG-47: server process exited during startup — fatal; operator must fix
                 raise PluginFatalError(error_msg)
-            
+
             time.sleep(0.5)
-        
-        # SG-47: server-startup timeout maps to typed PluginTimeoutError (CR-5).
-        # PluginTimeoutError subclasses PluginTransientError so substrate-side retry is
-        # opt-in (default_retriable=True but vLLM startup is usually a one-shot affair).
-        raise PluginTimeoutError(f"Server did not start within {timeout} seconds")
     
     def stop(self) -> None: # Returns nothing
         """Stop the vLLM server."""
@@ -507,15 +543,6 @@ class VoxtralVLLMPluginConfig:
             SCHEMA_MAX: 2.0
         }
     )
-    server_startup_timeout:int = field(
-        default=120,
-        metadata={
-            SCHEMA_TITLE: "Server Startup Timeout",
-            SCHEMA_DESC: "Timeout in seconds for server startup (managed mode)",
-            SCHEMA_MIN: 30,
-            SCHEMA_MAX: 600
-        }
-    )
     auto_start_server:bool = field(
         default=True,
         metadata={
@@ -688,9 +715,15 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         weight download for cold caches). No-op in external mode (caller
         manages the server). Idempotent via `_ensure_server_running`'s
         is_running() check.
+
+        Session A 2026-05-27: passes `self.report_progress` (inherited from
+        PluginInterface) through to VLLMServer so substrate.proxy.prefetch's
+        stall detection sees progress events on every vLLM log line. Replaces
+        the prior wall-clock `server_startup_timeout` config field — operators
+        no longer race network speeds against an arbitrary timeout value.
         """
         if self.config and self.config.server_mode == "managed":
-            self._ensure_server_running()
+            self._ensure_server_running(report_progress=self.report_progress)
 
     def on_disable(self) -> None:
         """CR-2: release the vLLM server subprocess when the operator disables
@@ -698,8 +731,18 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         lazy-respawns via `_ensure_server_running`."""
         self._release_vllm_server()
     
-    def _ensure_server_running(self) -> None:
-        """Ensure the vLLM server is running (for managed mode)."""
+    def _ensure_server_running(
+        self,
+        report_progress: Optional[Callable[[float, str], None]] = None,  # Session A: substrate-driven stall detection callback
+    ) -> None:
+        """Ensure the vLLM server is running (for managed mode).
+
+        Session A 2026-05-27: forwards `report_progress` to `VLLMServer.start`
+        so substrate.proxy.prefetch's stall detection sees progress events
+        while vLLM loads the model + captures CUDA graphs. Without a callback
+        (e.g., when called from `execute()` rather than `prefetch()`), startup
+        still loops to completion — just without progress reporting.
+        """
         if self.config.server_mode == "managed" and self.server:
             if not self.server.is_running():
                 self.logger.warning("vLLM server is not running")
@@ -707,8 +750,8 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                     self.logger.info("Starting vLLM server...")
                     self.server.start(
                         wait_for_ready=True,
-                        timeout=self.config.server_startup_timeout,
-                        show_progress=self.config.capture_server_logs
+                        show_progress=self.config.capture_server_logs,
+                        report_progress=report_progress,
                     )
                 else:
                     # SG-47: config combo (auto_start_server=False, no external server)

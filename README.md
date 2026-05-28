@@ -137,12 +137,16 @@ class VLLMServer:
         "Add a callback function to receive each log line."
     
     def start(
-            self, 
-            wait_for_ready: bool = True, # Wait for server to be ready before returning
-            timeout: int = 120, # Maximum seconds to wait for server readiness
-            show_progress: bool = True # Show progress indicators during startup
-        ) -> None: # Returns nothing
-        "Start the vLLM server."
+        "Start the vLLM server.
+
+Session A 2026-05-27: dropped the wall-clock `timeout` argument — startup
+time is unbounded (model download + CUDA graph capture), and any operator-
+set value would either race a slow network or be conservatively huge. The
+substrate's proxy.prefetch now drives stall detection via the
+report_progress callback (no progress update for SubstrateConfig.
+prefetch_stall_threshold_seconds → substrate SIGTERMs the worker). When
+report_progress is None we still loop forever; only the OS / operator can
+abort."
     
     def stop(self) -> None: # Returns nothing
             """Stop the vLLM server."""
@@ -195,7 +199,6 @@ class VoxtralVLLMPluginConfig:
     max_model_len: int = field(...)
     language: Optional[str] = field(...)
     temperature: float = field(...)
-    server_startup_timeout: int = field(...)
     auto_start_server: bool = field(...)
     capture_server_logs: bool = field(...)
     dtype: str = field(...)
@@ -277,13 +280,25 @@ via `_apply_config`."
             weight download for cold caches). No-op in external mode (caller
             manages the server). Idempotent via `_ensure_server_running`'s
             is_running() check.
+    
+            Session A 2026-05-27: passes `self.report_progress` (inherited from
+            PluginInterface) through to VLLMServer so substrate.proxy.prefetch's
+            stall detection sees progress events on every vLLM log line. Replaces
+            the prior wall-clock `server_startup_timeout` config field — operators
+            no longer race network speeds against an arbitrary timeout value.
             """
             if self.config and self.config.server_mode == "managed"
         "CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
 execute() doesn't pay the startup cost (model load, CUDA graph capture,
 weight download for cold caches). No-op in external mode (caller
 manages the server). Idempotent via `_ensure_server_running`'s
-is_running() check."
+is_running() check.
+
+Session A 2026-05-27: passes `self.report_progress` (inherited from
+PluginInterface) through to VLLMServer so substrate.proxy.prefetch's
+stall detection sees progress events on every vLLM log line. Replaces
+the prior wall-clock `server_startup_timeout` config field — operators
+no longer race network speeds against an arbitrary timeout value."
     
     def on_disable(self) -> None:
             """CR-2: release the vLLM server subprocess when the operator disables
@@ -291,7 +306,10 @@ is_running() check."
             lazy-respawns via `_ensure_server_running`."""
             self._release_vllm_server()
         
-        def _ensure_server_running(self) -> None
+        def _ensure_server_running(
+            self,
+            report_progress: Optional[Callable[[float, str], None]] = None,  # Session A: substrate-driven stall detection callback
+        ) -> None
         "CR-2: release the vLLM server subprocess when the operator disables
 the plugin while keeping the worker alive. Re-enable + next execute
 lazy-respawns via `_ensure_server_running`."

@@ -254,6 +254,8 @@ class VLLMServer:
         for the model download).
         """
         last_status = ""
+        last_line_summary: Optional[str] = None
+        start_time = time.time()
         phases = {
             "detected platform": "🔍 Detecting platform...",
             "Loading model": "📦 Loading model weights...",
@@ -266,7 +268,7 @@ class VLLMServer:
         }
 
         while True:
-            # Drain a log line if available; advance phase + emit progress for stall detection.
+            # Drain a log line if available; advance phase.
             try:
                 log_line = self.log_queue.get_nowait()
             except queue.Empty:
@@ -280,18 +282,25 @@ class VLLMServer:
                 if show_progress and detected_status and detected_status != last_status:
                     print(f"\n  {detected_status}")
                     last_status = detected_status
-                if report_progress is not None:
-                    # Substrate consumes (progress, message) tuple advances to defeat
-                    # the prefetch stall counter. Use 0.5 as a "still-progressing"
-                    # signal (vLLM startup has no calibrated 0..1 axis); the message
-                    # carries the phase or a clipped log line for operator visibility.
-                    summary = detected_status or log_line[:120]
-                    try:
-                        report_progress(0.5, f"vLLM: {summary}")
-                    except Exception:
-                        # report_progress is best-effort plumbing; never let it
-                        # break server startup.
-                        pass
+                last_line_summary = detected_status or log_line[:120]
+
+            # Heartbeat: report progress EVERY iteration with elapsed time embedded
+            # in the message so the (progress, message) tuple ALWAYS advances. This
+            # is the stall-detection contract — substrate.proxy.prefetch SIGTERMs
+            # the worker only when /progress STOPS advancing (the loop itself wedged
+            # / worker died). vLLM is silent for many seconds during HF Hub
+            # download setup; without this heartbeat, the substrate would SIGTERM
+            # a perfectly-fine plugin just because vLLM hadn't started emitting
+            # logs yet.
+            if report_progress is not None:
+                elapsed = time.time() - start_time
+                summary = last_line_summary or last_status or "awaiting vLLM startup logs"
+                try:
+                    report_progress(0.5, f"vLLM ({elapsed:.1f}s): {summary}")
+                except Exception:
+                    # report_progress is best-effort plumbing; never let it
+                    # break server startup.
+                    pass
 
             # Ready check.
             try:

@@ -461,7 +461,7 @@ class VLLMServer:
         """Context manager exit."""
         self.stop()
 
-# %% ../nbs/plugin.ipynb #7ff4bbf9
+# %% ../nbs/plugin.ipynb #config-dataclass
 @dataclass
 class VoxtralVLLMPluginConfig:
     """Configuration for Voxtral VLLM transcription plugin."""
@@ -586,7 +586,7 @@ class VoxtralVLLMPluginConfig:
         }
     )
 
-
+# %% ../nbs/plugin.ipynb #7ff4bbf9
 class VoxtralVLLMPlugin(TranscriptionPlugin):
     """Mistral Voxtral transcription plugin via vLLM server."""
     
@@ -656,72 +656,7 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
         """Return dataclass describing the plugin's configuration options."""
         return VoxtralVLLMPluginConfig
     
-    def _apply_config(
-        self,
-        config: Optional[Any] = None  # Configuration dataclass, dict, or None
-    ) -> None:
-        """CR-4: apply config + (re)build the VLLMServer (managed mode) and OpenAI client.
 
-        No-heavy-resource setup other than constructing the VLLMServer wrapper —
-        the actual subprocess spawn is deferred to `prefetch()` / first execute
-        via `_ensure_server_running()`. Called by `initialize` for first-time
-        setup and by the substrate's `reconfigure_with_triggers` delta path
-        AFTER `_release_vllm_server` has fired for any changed RELOAD_TRIGGER
-        field. The manual diff-and-reload block that used to live in
-        `initialize()` is replaced by the declarative RELOAD_TRIGGER metadata
-        on the config dataclass fields above (CR-4 Track 5).
-        """
-        self.config = dict_to_config(VoxtralVLLMPluginConfig, config or {})
-        self.model_id = self.config.model_id
-
-        # Build VLLMServer wrapper for managed mode (subprocess spawn happens later).
-        if self.config.server_mode == "managed":
-            if self.server is None:
-                self.server = VLLMServer(
-                    model=self.model_id,
-                    port=self.config.server_port,
-                    gpu_memory_utilization=self.config.gpu_memory_utilization,
-                    max_model_len=self.config.max_model_len,
-                    capture_logs=self.config.capture_server_logs,
-                    dtype=self.config.dtype,
-                    tensor_parallel_size=self.config.tensor_parallel_size,
-                )
-            server_url = f"http://localhost:{self.config.server_port}"
-        else:
-            # External-server mode: caller manages the vLLM server lifecycle.
-            server_url = self.config.server_url
-
-        # OpenAI-compatible client (vLLM's server speaks this protocol).
-        # Lazy: rebuild only when _release_vllm_server has cleared it. Since
-        # every base_url-affecting field (server_mode/server_url/server_port)
-        # is a RELOAD_TRIGGER, the substrate's reconfigure path always passes
-        # through _release_vllm_server (which sets self.client = None) before
-        # re-entering _apply_config — so a None check is sufficient + avoids
-        # client churn on unrelated config changes (e.g. temperature).
-        if self.client is None:
-            self.client = OpenAI(
-                api_key="EMPTY",  # vLLM doesn't require an API key
-                base_url=f"{server_url}/v1",
-            )
-
-    def _release_vllm_server(self) -> None:
-        """CR-4: release the managed vLLM server subprocess + the OpenAI client.
-
-        Called by the substrate's `reconfigure_with_triggers` BEFORE
-        `_apply_config` rebuilds them, whenever any RELOAD_TRIGGER="vllm_server"
-        field changes. Also called from `on_disable()` (operator-initiated
-        disable while the worker stays alive) and `cleanup()` (worker unload).
-        Idempotent: safe to call when the server is already stopped or the
-        client is already None.
-        """
-        if self.server is not None:
-            if self.server.is_running():
-                self.logger.info("Releasing managed vLLM server subprocess")
-                self.server.stop()
-            self.server = None
-        # Client recreation is cheap; drop it eagerly so any stale base_url
-        # / api_key state can't survive into the next _apply_config.
-        self.client = None
 
     def initialize(
         self,
@@ -742,122 +677,10 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
             f"in {self.config.server_mode} mode"
         )
 
-    def prefetch(self) -> None:
-        """CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
-        execute() doesn't pay the startup cost (model load, CUDA graph capture,
-        weight download for cold caches). No-op in external mode (caller
-        manages the server). Idempotent via `_ensure_server_running`'s
-        is_running() check.
 
-        Session A 2026-05-27: passes `self.report_progress` (inherited from
-        PluginInterface) through to VLLMServer so substrate.proxy.prefetch's
-        stall detection sees progress events on every vLLM log line. Replaces
-        the prior wall-clock `server_startup_timeout` config field — operators
-        no longer race network speeds against an arbitrary timeout value.
-        """
-        if self.config and self.config.server_mode == "managed":
-            self._ensure_server_running(report_progress=self.report_progress)
-
-    def on_disable(self) -> None:
-        """CR-2: release the vLLM server subprocess when the operator disables
-        the plugin while keeping the worker alive. Re-enable + next execute
-        lazy-respawns via `_ensure_server_running`."""
-        self._release_vllm_server()
     
-    def _ensure_server_running(
-        self,
-        report_progress: Optional[Callable[[float, str], None]] = None,  # Session A: substrate-driven stall detection callback
-    ) -> None:
-        """Ensure the vLLM server is running (for managed mode).
-
-        Session A 2026-05-27: forwards `report_progress` to `VLLMServer.start`
-        so substrate.proxy.prefetch's stall detection sees progress events
-        while vLLM loads the model + captures CUDA graphs. Without a callback
-        (e.g., when called from `execute()` rather than `prefetch()`), startup
-        still loops to completion — just without progress reporting.
-        """
-        if self.config.server_mode == "managed" and self.server:
-            if not self.server.is_running():
-                self.logger.warning("vLLM server is not running")
-                if self.config.auto_start_server:
-                    self.logger.info("Starting vLLM server...")
-                    self.server.start(
-                        wait_for_ready=True,
-                        show_progress=self.config.capture_server_logs,
-                        report_progress=report_progress,
-                    )
-                else:
-                    # SG-47: config combo (auto_start_server=False, no external server)
-                    # is operator-misconfigured at execute-time; fatal until reconfigured.
-                    raise PluginFatalError("vLLM server is not running and auto_start_server is disabled")
-        elif self.config.server_mode == "external":
-            # Check if external server is accessible
-            try:
-                response = requests.get(f"{self.config.server_url}/health", timeout=5)
-                if response.status_code != 200:
-                    # SG-47: external server unhealthy — transient; substrate retry plausible
-                    # if server self-recovers.
-                    raise PluginTransientError(f"External vLLM server returned status {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                # SG-47: network failure → transient; substrate retry may succeed.
-                raise PluginTransientError(f"Cannot connect to external vLLM server: {e}") from e
     
-    def _prepare_audio(
-        self,
-        audio: Union[str, Path] # Path to a decodable audio file
-    ) -> str: # The audio file path
-        """Validate the audio input and return it as a path string.
 
-        The caller (orchestration / proxy) guarantees a model-ready audio file;
-        in-memory preparation is no longer a plugin responsibility."""
-        if isinstance(audio, (str, Path)):
-            return str(audio)
-        raise PluginInputError(  # SG-47: typed input-validation (multi-inherits ValueError)
-            f"Unsupported audio input type: {type(audio)}; expected a file path (str or Path)",
-            fields_invalid=["audio"],
-        )
-
-    def _check_vllm_subprocess_death(
-        self,
-        original_exc: BaseException,  # The exception caught from the HTTP call
-        context: str,                 # Human-readable context for the error message
-    ) -> None:
-        """SG-47 Track B follow-up: classify HTTP failures by vLLM subprocess state.
-
-        If the managed vLLM server subprocess (`self.server.process`) has exited,
-        the request failure is most likely due to vLLM dying — typically
-        CUDA OOM in the vLLM server during model inference. Raises
-        `PluginResourceError` so substrate's CR-7 reactive-retry can reload
-        + retry. If the process is alive (or external-server mode without
-        a managed process), returns without raising — caller re-raises the
-        original exception which the substrate's default classify_exception()
-        MRO walk handles via CR-5.
-
-        Analogous to CR-7's `_check_worker_death` Track A classifier in the
-        substrate, but applied to the vLLM subprocess (one process layer
-        deeper than the plugin worker). The substrate sees a clean
-        PluginResourceError from the plugin worker rather than the worker
-        itself crashing.
-        """
-        # SG-47 Track B follow-up fix: the prior code referenced `self.process`,
-        # but the plugin doesn't own a Popen directly — the managed-mode
-        # `VLLMServer` wrapper does. Access via `self.server.process`; external
-        # mode (no managed server) returns without raising.
-        server = self.server
-        if server is None or server.process is None:
-            return
-        rc = server.process.poll()
-        if rc is not None:
-            raise PluginResourceError(
-                f"vLLM server subprocess died during {context} "
-                f"(exit code {rc}): {original_exc}. "
-                f"Most likely CUDA OOM in the vLLM server subprocess.",
-                resource_shortfall=ResourceShortfall(
-                    resource='gpu_vram_mb',
-                    needed=0.0,     # Server is dead — can't query exact numbers
-                    available=0.0,  # Same; substrate uses presence of shortfall + CR-7 retry
-                ),
-            ) from original_exc
 
     def execute(
         self,
@@ -942,28 +765,230 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
                     Path(audio_path).unlink()
                 except Exception:
                     pass
-    
-    def is_available(self) -> bool: # True if vLLM and dependencies are available
-        """Check if vLLM and required dependencies are available."""
-        if not OPENAI_AVAILABLE:
-            return False
-        if not MISTRAL_COMMON_AVAILABLE:
-            return False
-        
-        # Check if vLLM is installed
+
+# %% ../nbs/plugin.ipynb #m-apply-config
+@patch
+def _apply_config(
+    self:VoxtralVLLMPlugin,
+    config: Optional[Any] = None  # Configuration dataclass, dict, or None
+) -> None:
+    """CR-4: apply config + (re)build the VLLMServer (managed mode) and OpenAI client.
+
+    No-heavy-resource setup other than constructing the VLLMServer wrapper —
+    the actual subprocess spawn is deferred to `prefetch()` / first execute
+    via `_ensure_server_running()`. Called by `initialize` for first-time
+    setup and by the substrate's `reconfigure_with_triggers` delta path
+    AFTER `_release_vllm_server` has fired for any changed RELOAD_TRIGGER
+    field. The manual diff-and-reload block that used to live in
+    `initialize()` is replaced by the declarative RELOAD_TRIGGER metadata
+    on the config dataclass fields above (CR-4 Track 5).
+    """
+    self.config = dict_to_config(VoxtralVLLMPluginConfig, config or {})
+    self.model_id = self.config.model_id
+
+    # Build VLLMServer wrapper for managed mode (subprocess spawn happens later).
+    if self.config.server_mode == "managed":
+        if self.server is None:
+            self.server = VLLMServer(
+                model=self.model_id,
+                port=self.config.server_port,
+                gpu_memory_utilization=self.config.gpu_memory_utilization,
+                max_model_len=self.config.max_model_len,
+                capture_logs=self.config.capture_server_logs,
+                dtype=self.config.dtype,
+                tensor_parallel_size=self.config.tensor_parallel_size,
+            )
+        server_url = f"http://localhost:{self.config.server_port}"
+    else:
+        # External-server mode: caller manages the vLLM server lifecycle.
+        server_url = self.config.server_url
+
+    # OpenAI-compatible client (vLLM's server speaks this protocol).
+    # Lazy: rebuild only when _release_vllm_server has cleared it. Since
+    # every base_url-affecting field (server_mode/server_url/server_port)
+    # is a RELOAD_TRIGGER, the substrate's reconfigure path always passes
+    # through _release_vllm_server (which sets self.client = None) before
+    # re-entering _apply_config — so a None check is sufficient + avoids
+    # client churn on unrelated config changes (e.g. temperature).
+    if self.client is None:
+        self.client = OpenAI(
+            api_key="EMPTY",  # vLLM doesn't require an API key
+            base_url=f"{server_url}/v1",
+        )
+
+# %% ../nbs/plugin.ipynb #m-release-vllm-server
+@patch
+def _release_vllm_server(self:VoxtralVLLMPlugin) -> None:
+    """CR-4: release the managed vLLM server subprocess + the OpenAI client.
+
+    Called by the substrate's `reconfigure_with_triggers` BEFORE
+    `_apply_config` rebuilds them, whenever any RELOAD_TRIGGER="vllm_server"
+    field changes. Also called from `on_disable()` (operator-initiated
+    disable while the worker stays alive) and `cleanup()` (worker unload).
+    Idempotent: safe to call when the server is already stopped or the
+    client is already None.
+    """
+    if self.server is not None:
+        if self.server.is_running():
+            self.logger.info("Releasing managed vLLM server subprocess")
+            self.server.stop()
+        self.server = None
+    # Client recreation is cheap; drop it eagerly so any stale base_url
+    # / api_key state can't survive into the next _apply_config.
+    self.client = None
+
+# %% ../nbs/plugin.ipynb #m-prefetch
+@patch
+def prefetch(self:VoxtralVLLMPlugin) -> None:
+    """CR-4 (SG-19): eagerly spawn the managed vLLM server so the first
+    execute() doesn't pay the startup cost (model load, CUDA graph capture,
+    weight download for cold caches). No-op in external mode (caller
+    manages the server). Idempotent via `_ensure_server_running`'s
+    is_running() check.
+
+    Session A 2026-05-27: passes `self.report_progress` (inherited from
+    PluginInterface) through to VLLMServer so substrate.proxy.prefetch's
+    stall detection sees progress events on every vLLM log line. Replaces
+    the prior wall-clock `server_startup_timeout` config field — operators
+    no longer race network speeds against an arbitrary timeout value.
+    """
+    if self.config and self.config.server_mode == "managed":
+        self._ensure_server_running(report_progress=self.report_progress)
+
+# %% ../nbs/plugin.ipynb #m-on-disable
+@patch
+def on_disable(self:VoxtralVLLMPlugin) -> None:
+    """CR-2: release the vLLM server subprocess when the operator disables
+    the plugin while keeping the worker alive. Re-enable + next execute
+    lazy-respawns via `_ensure_server_running`."""
+    self._release_vllm_server()
+
+# %% ../nbs/plugin.ipynb #m-ensure-server-running
+@patch
+def _ensure_server_running(
+    self:VoxtralVLLMPlugin,
+    report_progress: Optional[Callable[[float, str], None]] = None,  # Session A: substrate-driven stall detection callback
+) -> None:
+    """Ensure the vLLM server is running (for managed mode).
+
+    Session A 2026-05-27: forwards `report_progress` to `VLLMServer.start`
+    so substrate.proxy.prefetch's stall detection sees progress events
+    while vLLM loads the model + captures CUDA graphs. Without a callback
+    (e.g., when called from `execute()` rather than `prefetch()`), startup
+    still loops to completion — just without progress reporting.
+    """
+    if self.config.server_mode == "managed" and self.server:
+        if not self.server.is_running():
+            self.logger.warning("vLLM server is not running")
+            if self.config.auto_start_server:
+                self.logger.info("Starting vLLM server...")
+                self.server.start(
+                    wait_for_ready=True,
+                    show_progress=self.config.capture_server_logs,
+                    report_progress=report_progress,
+                )
+            else:
+                # SG-47: config combo (auto_start_server=False, no external server)
+                # is operator-misconfigured at execute-time; fatal until reconfigured.
+                raise PluginFatalError("vLLM server is not running and auto_start_server is disabled")
+    elif self.config.server_mode == "external":
+        # Check if external server is accessible
         try:
-            import vllm
-            return True
-        except ImportError:
-            return False
-    
-    def cleanup(self) -> None:
-        """Release resources on unload. CR-4: delegates to `_release_vllm_server`
-        so both the worker-unload path AND the operator-disable / reconfigure
-        paths converge on one release implementation."""
-        self.logger.info("Cleaning up Voxtral VLLM plugin")
-        self._release_vllm_server()
-        self.logger.info("Cleanup completed successfully")
+            response = requests.get(f"{self.config.server_url}/health", timeout=5)
+            if response.status_code != 200:
+                # SG-47: external server unhealthy — transient; substrate retry plausible
+                # if server self-recovers.
+                raise PluginTransientError(f"External vLLM server returned status {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            # SG-47: network failure → transient; substrate retry may succeed.
+            raise PluginTransientError(f"Cannot connect to external vLLM server: {e}") from e
+
+# %% ../nbs/plugin.ipynb #m-prepare-audio
+@patch
+def _prepare_audio(
+    self:VoxtralVLLMPlugin,
+    audio: Union[str, Path] # Path to a decodable audio file
+) -> str: # The audio file path
+    """Validate the audio input and return it as a path string.
+
+    The caller (orchestration / proxy) guarantees a model-ready audio file;
+    in-memory preparation is no longer a plugin responsibility."""
+    if isinstance(audio, (str, Path)):
+        return str(audio)
+    raise PluginInputError(  # SG-47: typed input-validation (multi-inherits ValueError)
+        f"Unsupported audio input type: {type(audio)}; expected a file path (str or Path)",
+        fields_invalid=["audio"],
+    )
+
+# %% ../nbs/plugin.ipynb #m-check-vllm-subprocess-death
+@patch
+def _check_vllm_subprocess_death(
+    self:VoxtralVLLMPlugin,
+    original_exc: BaseException,  # The exception caught from the HTTP call
+    context: str,                 # Human-readable context for the error message
+) -> None:
+    """SG-47 Track B follow-up: classify HTTP failures by vLLM subprocess state.
+
+    If the managed vLLM server subprocess (`self.server.process`) has exited,
+    the request failure is most likely due to vLLM dying — typically
+    CUDA OOM in the vLLM server during model inference. Raises
+    `PluginResourceError` so substrate's CR-7 reactive-retry can reload
+    + retry. If the process is alive (or external-server mode without
+    a managed process), returns without raising — caller re-raises the
+    original exception which the substrate's default classify_exception()
+    MRO walk handles via CR-5.
+
+    Analogous to CR-7's `_check_worker_death` Track A classifier in the
+    substrate, but applied to the vLLM subprocess (one process layer
+    deeper than the plugin worker). The substrate sees a clean
+    PluginResourceError from the plugin worker rather than the worker
+    itself crashing.
+    """
+    # SG-47 Track B follow-up fix: the prior code referenced `self.process`,
+    # but the plugin doesn't own a Popen directly — the managed-mode
+    # `VLLMServer` wrapper does. Access via `self.server.process`; external
+    # mode (no managed server) returns without raising.
+    server = self.server
+    if server is None or server.process is None:
+        return
+    rc = server.process.poll()
+    if rc is not None:
+        raise PluginResourceError(
+            f"vLLM server subprocess died during {context} "
+            f"(exit code {rc}): {original_exc}. "
+            f"Most likely CUDA OOM in the vLLM server subprocess.",
+            resource_shortfall=ResourceShortfall(
+                resource='gpu_vram_mb',
+                needed=0.0,     # Server is dead — can't query exact numbers
+                available=0.0,  # Same; substrate uses presence of shortfall + CR-7 retry
+            ),
+        ) from original_exc
+
+# %% ../nbs/plugin.ipynb #m-is-available
+@patch
+def is_available(self:VoxtralVLLMPlugin) -> bool: # True if vLLM and dependencies are available
+    """Check if vLLM and required dependencies are available."""
+    if not OPENAI_AVAILABLE:
+        return False
+    if not MISTRAL_COMMON_AVAILABLE:
+        return False
+
+    # Check if vLLM is installed
+    try:
+        import vllm
+        return True
+    except ImportError:
+        return False
+
+# %% ../nbs/plugin.ipynb #m-cleanup
+@patch
+def cleanup(self:VoxtralVLLMPlugin) -> None:
+    """Release resources on unload. CR-4: delegates to `_release_vllm_server`
+    so both the worker-unload path AND the operator-disable / reconfigure
+    paths converge on one release implementation."""
+    self.logger.info("Cleaning up Voxtral VLLM plugin")
+    self._release_vllm_server()
+    self.logger.info("Cleanup completed successfully")
 
 # %% ../nbs/plugin.ipynb #99ef2767
 @patch

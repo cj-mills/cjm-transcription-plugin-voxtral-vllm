@@ -21,7 +21,6 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
     
     # Use CJM config if available, else fallback to env-relative paths
     cjm_data_dir = os.environ.get("CJM_DATA_DIR")
-    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
     
     # Plugin data directory
     plugin_name = "cjm-transcription-plugin-voxtral-vllm"
@@ -34,16 +33,12 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
     
     # Ensure data directory exists
     os.makedirs(data_dir, exist_ok=True)
-    
-    # HuggingFace cache: use models_dir if configured
-    if cjm_models_dir:
-        hf_home = os.path.join(cjm_models_dir, "huggingface")
-    else:
-        hf_home = os.path.join(base_path, ".cache", "huggingface")
 
     return {
         "name": plugin_name,
         "version": __version__,
+        # T24: non-empty description required by the substrate validator (SG-6 / V1 gate).
+        "description": "Mistral Voxtral speech transcription served via a managed vLLM server (OpenAI-compatible API).",
         "type": "transcription",
         "category": "transcription",
         "interface": "cjm_transcription_plugin_system.plugin_interface.TranscriptionPlugin",
@@ -56,18 +51,14 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
         
         "db_path": db_path,
         
-        # Voxtral via vLLM requires significant GPU resources
-        # Mini: ~8GB VRAM, Small: ~48GB VRAM
+        # Phase 5a / CR-7 reframe: binary hard-facts only (quantitative amounts dropped,
+        # V12 gate). Voxtral via vLLM is GPU-required.
         "resources": {
-            "requires_gpu": True,
-            "min_gpu_vram_mb": 8192,
-            "recommended_gpu_vram_mb": 16384,
-            "min_system_ram_mb": 16384
+            "requires_gpu": True
         },
         
-        "env_vars": {
-            "CUDA_VISIBLE_DEVICES": "0",
-            "VLLM_ATTENTION_BACKEND": "FLASHINFER",
-            "HF_HOME": hf_home
-        }
+        # Track 19: CUDA_VISIBLE_DEVICES + VLLM_ATTENTION_BACKEND (static) + HF_HOME
+        # (templated) are declared on the plugin class via WORKER_ENV; the substrate
+        # resolves + injects them at spawn.
+        "env_vars": {}
     }

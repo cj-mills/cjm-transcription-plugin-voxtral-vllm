@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
-from typing import Callable, Dict, Any, Optional, List, Union, Generator
+from typing import Callable, Dict, Any, Optional, List, Union, Generator, ClassVar
 import tempfile
 import warnings
 from threading import Thread
@@ -62,7 +62,7 @@ from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, validate_config, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_MIN, SCHEMA_MAX, SCHEMA_ENUM
 )
-from cjm_plugin_system.core.interface import RELOAD_TRIGGER  # CR-4 declarative reload metadata
+from cjm_plugin_system.core.interface import RELOAD_TRIGGER, EnvVarSpec  # CR-4 reload metadata + CR-12 worker-env (Track 19)
 
 from cjm_transcription_plugin_voxtral_vllm.meta import (
     get_plugin_metadata
@@ -478,8 +478,7 @@ class VoxtralVLLMPluginConfig:
         default="cuda",
         metadata={
             SCHEMA_TITLE: "Device",
-            SCHEMA_DESC: "Device for inference (will use CUDA if available)",
-            SCHEMA_ENUM: ["cuda"]
+            SCHEMA_DESC: "Device for inference (will use CUDA if available)"
         }
     )
     server_mode:str = field(
@@ -592,6 +591,31 @@ class VoxtralVLLMPlugin(TranscriptionPlugin):
     """Mistral Voxtral transcription plugin via vLLM server."""
     
     config_class = VoxtralVLLMPluginConfig
+
+    # Track 19 (CR-12 worker-env model): worker spawn env declared on the class.
+    # CUDA_VISIBLE_DEVICES + VLLM_ATTENTION_BACKEND are static; HF_HOME is templated to
+    # the substrate models dir (vLLM pulls Voxtral weights from HF Hub). The substrate
+    # resolves + injects these at Popen.
+    WORKER_ENV: ClassVar[List[EnvVarSpec]] = [
+        EnvVarSpec(
+            name="CUDA_VISIBLE_DEVICES",
+            default="0",
+            label="GPU Device",
+            description="Which GPU index the worker uses.",
+        ),
+        EnvVarSpec(
+            name="VLLM_ATTENTION_BACKEND",
+            default="FLASHINFER",
+            label="vLLM Attention Backend",
+            description="vLLM attention kernel backend.",
+        ),
+        EnvVarSpec(
+            name="HF_HOME",
+            default="${CJM_MODELS_DIR}/huggingface",
+            label="HF Cache Directory",
+            description="HuggingFace Hub cache root (templated to the substrate models dir).",
+        ),
+    ]
     
     def __init__(self):
         """Initialize the Voxtral VLLM plugin with default configuration."""

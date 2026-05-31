@@ -22,7 +22,11 @@ dependencies:
     - cjm-transcription-plugin-system
 
     # vLLM and Mistral dependencies
-    - vllm
+    # Pinned (2026-05-30): vllm 0.22.0 pulls flashinfer 0.6.11.post2 + CUDA-13 CUB headers
+    # whose JIT-compiled sampling kernel fails against the system nvcc 12.0
+    # (cub BlockAdjacentDifference has no member "FlagHeads"). 0.21.0 anchors a
+    # self-consistent pre-CUDA-13 torch/flashinfer/transformers set. SG-12 reproducibility.
+    - vllm==0.21.0
     - mistral-common[audio]
     - transformers
     - accelerate

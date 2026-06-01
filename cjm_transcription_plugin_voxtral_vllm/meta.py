@@ -20,12 +20,12 @@ def get_plugin_metadata() -> Dict[str, Any]: # Plugin metadata for manifest gene
     base_path = os.path.dirname(os.path.dirname(sys.executable))
     
     # Use CJM config if available, else fallback to env-relative paths
-    cjm_data_dir = os.environ.get("CJM_DATA_DIR")
+    cjm_plugin_data_dir = os.environ.get("CJM_PLUGIN_DATA_DIR")
     
     # Plugin data directory
     plugin_name = "cjm-transcription-plugin-voxtral-vllm"
-    if cjm_data_dir:
-        data_dir = os.path.join(cjm_data_dir, plugin_name)
+    if cjm_plugin_data_dir:
+        data_dir = os.path.join(cjm_plugin_data_dir, plugin_name)
     else:
         data_dir = os.path.join(base_path, "data")
     

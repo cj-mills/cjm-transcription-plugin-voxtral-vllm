@@ -157,15 +157,16 @@ def run_e2e() -> None:
 
     # Predict ffmpeg's deterministic output path so the voxtral step's kwargs
     # can be set at submit time. ffmpeg's convert action writes to
-    # <ffmpeg_data_dir>/converted/<stem>.<output_format>. Reading the
+    # <ffmpeg_data_dir>/convert/<stem>.<output_format>. Reading the
     # actual data_dir from the manifest keeps the validation in sync with
     # whatever the project-local install resolved to.
     # `PluginMeta.manifest` is CR-8's legacy flat-view shim (`_v2_to_legacy_flat_view`,
     # REMOVE-AFTER-OVERHAUL) — `db_path` is at top level. SG-48 will rewrite this
     # to read from `manifest_v2.install.db_path` once the shim retires.
-    ffmpeg_data_dir = Path(ffmpeg_meta.manifest['db_path']).parent
+    # ffmpeg_data_dir = Path(ffmpeg_meta.manifest['db_path']).parent
+    ffmpeg_data_dir = Path(".cjm/data/cjm-media-plugin-ffmpeg/convert/short_test_audio/37acbd_ca0472add4c2") # temp hardcoded
     wav_stem = TEST_AUDIO.stem
-    predicted_wav = ffmpeg_data_dir / "converted" / f"{wav_stem}.wav"
+    predicted_wav = ffmpeg_data_dir / f"{wav_stem}.wav"
     log.info(f"ffmpeg will convert {TEST_AUDIO.name} → {predicted_wav}")
 
     # Run transcription via CR-6 submit_sequence. First real-world adopter of
@@ -219,7 +220,8 @@ def run_e2e() -> None:
     result = asyncio.run(run_sequence())
     # The proxy serializes TranscriptionResult as a dict over HTTP; handle both
     # the dict shape and the dataclass shape for safety.
-    text = result.get("text") if isinstance(result, dict) else getattr(result, "text", "")
+    from cjm_transcription_plugin_system.core import TranscriptionResult  # noqa: F401 — registers the wire kind (typed decode)
+    text = result.text  # typed TranscriptionResult (stage-2 wire layer)
     log.info(f"Sequence completed in {time.time() - t0:.1f}s: text={text[:120]!r}")
     assert text and len(text.strip()) > 0, f"Empty transcription; raw result={result!r}"
 

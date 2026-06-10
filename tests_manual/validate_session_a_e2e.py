@@ -103,12 +103,13 @@ def assert_manifest_shape() -> None:
 
 
 def run_e2e() -> None:
-    """Live transcription via submit_sequence: ffmpeg convert (MP3→WAV) → voxtral execute."""
+    """Live transcription via submit_composition: ffmpeg convert (MP3→WAV) → voxtral execute."""
     import asyncio
 
     from cjm_plugin_system.core.manager import PluginManager
     from cjm_plugin_system.core.config import get_config
-    from cjm_plugin_system.core.queue import JobQueue, SequenceStep, JobStatus
+    from cjm_plugin_system.core.queue import JobQueue
+    from cjm_plugin_system.core.ports import Composition, CompositionNode, NodeState, OutputRef
 
     cfg = get_config()
     log.info(f"data_dir={cfg.data_dir}, manifests_dir={cfg.manifests_dir}")
@@ -128,7 +129,8 @@ def run_e2e() -> None:
     # Load ffmpeg for the upstream audio-prep step (Track 12 / N1 deferred reframe:
     # production audio prep relocates upstream via ffmpeg-plugin's `convert` action
     # rather than being codified per-plugin in `_prepare_audio`). This validation
-    # is the first real-world adopter of CR-6's `submit_sequence` for that pattern.
+    # was the first real-world adopter of the sequence primitive; stage 3
+    # re-expressed it on CR-16 composition ports.
     ffmpeg_meta = next(m for m in pm.discovered if m.name == FFMPEG_NAME)
     pm.load_plugin(ffmpeg_meta)
     log.info(f"Loaded {FFMPEG_NAME}")
@@ -155,74 +157,41 @@ def run_e2e() -> None:
     voxtral_proxy.prefetch()
     log.info(f"prefetch() returned in {time.time() - t0:.1f}s")
 
-    # Predict ffmpeg's deterministic output path so the voxtral step's kwargs
-    # can be set at submit time. ffmpeg's convert action writes to
-    # <ffmpeg_data_dir>/convert/<stem>.<output_format>. Reading the
-    # actual data_dir from the manifest keeps the validation in sync with
-    # whatever the project-local install resolved to.
-    # `PluginMeta.manifest` is CR-8's legacy flat-view shim (`_v2_to_legacy_flat_view`,
-    # REMOVE-AFTER-OVERHAUL) — `db_path` is at top level. SG-48 will rewrite this
-    # to read from `manifest_v2.install.db_path` once the shim retires.
-    # ffmpeg_data_dir = Path(ffmpeg_meta.manifest['db_path']).parent
-    ffmpeg_data_dir = Path(".cjm/data/cjm-media-plugin-ffmpeg/convert/short_test_audio/37acbd_ca0472add4c2") # temp hardcoded
-    wav_stem = TEST_AUDIO.stem
-    predicted_wav = ffmpeg_data_dir / f"{wav_stem}.wav"
-    log.info(f"ffmpeg will convert {TEST_AUDIO.name} → {predicted_wav}")
-
-    # Run transcription via CR-6 submit_sequence. First real-world adopter of
-    # the sequence primitive in the substrate-overhaul cascade.
-    async def run_sequence() -> Any:
+    # CR-16 (stage 3): the composition binds voxtral's `audio` to ffmpeg's
+    # ACTUAL hashed cache_dir_for_config output path at execution time via
+    # OutputRef — the 2026-06-01 temp-hardcoded prediction path is retired
+    # (this script was the gap memory's first checklist item).
+    async def run_composition() -> Any:
         queue = JobQueue(deps=pm, sysmon_plugin_name=SYSMON_NAME)
         await queue.start()
         try:
-            seq_id = await queue.submit_sequence(
-                steps=[
-                    SequenceStep(
-                        plugin_instance_id=ffmpeg_id,
-                        kwargs={
-                            "action": "convert",
-                            "input_path": str(TEST_AUDIO),
-                            "output_format": "wav",
-                            "sample_rate": 16000,
-                            "channels": 1,
-                        },
-                    ),
-                    SequenceStep(
-                        plugin_instance_id=voxtral_id,
-                        kwargs={"audio": str(predicted_wav)},
-                    ),
-                ],
-                fail_fast=True,
-            )
-            log.info(f"Submitted sequence {seq_id}: ffmpeg.convert → voxtral.execute")
-
-            # Wait for sequence completion.
-            terminal = {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}
-            while True:
-                seq = queue.get_sequence(seq_id)
-                if seq is None:
-                    raise RuntimeError(f"sequence {seq_id} disappeared")
-                if seq.status in terminal:
-                    break
-                await asyncio.sleep(0.5)
-
-            if seq.status != JobStatus.completed:
-                last_result = seq.results[-1] if seq.results else None
-                raise RuntimeError(f"Sequence {seq_id} status={seq.status}; last={last_result}")
-            log.info(f"Sequence {seq_id} completed with {len(seq.results)} steps")
-            # seq.results is the list of per-step StepResult; final transcription is the last step's result.
-            return seq.results[-1].result
+            comp_id = await queue.submit_composition(Composition(nodes=[
+                CompositionNode("convert", ffmpeg_id, {
+                    "action": "convert",
+                    "input_path": str(TEST_AUDIO),
+                    "output_format": "wav",
+                    "sample_rate": 16000,
+                    "channels": 1,
+                }),
+                CompositionNode("transcribe", voxtral_id,
+                                {"audio": OutputRef("convert", "output_path")}),
+            ]))
+            log.info(f"Submitted composition {comp_id}: ffmpeg.convert → voxtral.execute")
+            run = await queue.wait_for_composition(comp_id)
+            if run.status != NodeState.completed:
+                raise RuntimeError(f"Composition {comp_id} status={run.status}; nodes={run.node_runs}")
+            return run.results_by_node()["transcribe"]
         finally:
             await queue.stop()
 
-    log.info(f"Submitting submit_sequence(ffmpeg.convert + voxtral.execute) for {TEST_AUDIO}...")
+    log.info(f"Submitting composition (ffmpeg.convert + voxtral.execute) for {TEST_AUDIO}...")
     t0 = time.time()
-    result = asyncio.run(run_sequence())
+    result = asyncio.run(run_composition())
     # The proxy serializes TranscriptionResult as a dict over HTTP; handle both
     # the dict shape and the dataclass shape for safety.
     from cjm_transcription_plugin_system.core import TranscriptionResult  # noqa: F401 — registers the wire kind (typed decode)
     text = result.text  # typed TranscriptionResult (stage-2 wire layer)
-    log.info(f"Sequence completed in {time.time() - t0:.1f}s: text={text[:120]!r}")
+    log.info(f"Composition completed in {time.time() - t0:.1f}s: text={text[:120]!r}")
     assert text and len(text.strip()) > 0, f"Empty transcription; raw result={result!r}"
 
     # Verify empirical_resources.db captured the sample with non-zero GPU memory.
